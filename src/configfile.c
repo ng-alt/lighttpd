@@ -137,7 +137,16 @@ static int config_insert(server *srv) {
 			"use server.force-lowercase-filenames instead",
 			T_CONFIG_DEPRECATED, T_CONFIG_SCOPE_UNSET },
 
-		{ NULL,                                NULL, T_CONFIG_UNSET,   T_CONFIG_SCOPE_UNSET      }
+		//- Sungmin add
+		{ "server.arpping-interface",	 NULL, T_CONFIG_STRING, T_CONFIG_SCOPE_SERVER },	  /* 78 */
+		{ "server.syslog",               NULL, T_CONFIG_STRING, T_CONFIG_SCOPE_SERVER },      /* 79 */
+		{ "router.product-image",        NULL, T_CONFIG_STRING, T_CONFIG_SCOPE_SERVER },      /* 80 */
+		{ "aicloud.version",             NULL, T_CONFIG_STRING, T_CONFIG_SCOPE_SERVER },      /* 81 */
+		{ "router.app_installation-url", NULL, T_CONFIG_STRING, T_CONFIG_SCOPE_SERVER },      /* 82 */
+		{ "aicloud.max-sharelink",       NULL, T_CONFIG_INT, T_CONFIG_SCOPE_CONNECTION },     /* 83 */
+		{ "smartsync.version",           NULL, T_CONFIG_STRING, T_CONFIG_SCOPE_SERVER },      /* 84 */
+
+        { NULL,                                NULL, T_CONFIG_UNSET,   T_CONFIG_SCOPE_UNSET      }
 	};
 
 	/* all T_CONFIG_SCOPE_SERVER options */
@@ -171,6 +180,15 @@ static int config_insert(server *srv) {
 	cv[55].destination = srv->srvconf.breakagelog_file;
 
 	cv[68].destination = &(srv->srvconf.upload_temp_file_size);
+		
+    //- Sungmin add 20111018
+	cv[78].destination = srv->srvconf.arpping_interface;
+	cv[79].destination = srv->srvconf.syslog_file;
+	cv[80].destination = srv->srvconf.product_image;
+	cv[81].destination = srv->srvconf.aicloud_version;
+	cv[82].destination = srv->srvconf.app_installation_url;	
+	cv[83].destination = &(srv->srvconf.max_sharelink);
+	cv[84].destination = srv->srvconf.smartsync_version;
 
 	srv->config_storage = calloc(1, srv->config_context->used * sizeof(specific_config *));
 
@@ -283,7 +301,7 @@ static int config_insert(server *srv) {
 		cv[67].destination = &(s->ssl_empty_fragments);
 
 		srv->config_storage[i] = s;
-
+		
 		if (0 != (ret = config_insert_values_global(srv, config->value, cv, i == 0 ? T_CONFIG_SCOPE_SERVER : T_CONFIG_SCOPE_CONNECTION))) {
 			break;
 		}
@@ -497,6 +515,9 @@ int config_patch_connection(server *srv, connection *con, comp_key_t comp) {
 				PATCH(ssl_verifyclient_export_cert);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("ssl.disable-client-renegotiation"))) {
 				PATCH(ssl_disable_client_renegotiation);
+			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("server.arpping-interface"))) {
+				//Cdbg(DBE, "arpping_interface");
+				//PATCH(arpping_interface);
 			}
 		}
 	}
@@ -1168,13 +1189,13 @@ int config_read(server *srv, const char *fn) {
 	if (0 != ret) {
 		return ret;
 	}
-
+	
 	if (NULL != (dc = (data_config *)array_get_element(srv->config_context, "global"))) {
 		srv->config = dc->value;
 	} else {
 		return -1;
 	}
-
+	
 	if (NULL != (modules = (data_array *)array_get_element(srv->config, "server.modules"))) {
 		data_string *ds;
 		data_array *prepends;
@@ -1183,23 +1204,23 @@ int config_read(server *srv, const char *fn) {
 			fprintf(stderr, "server.modules must be an array");
 			return -1;
 		}
-
+		
 		prepends = data_array_init();
-
+		
 		/* prepend default modules */
 		if (NULL == array_get_element(modules->value, "mod_indexfile")) {
 			ds = data_string_init();
 			buffer_copy_string_len(ds->value, CONST_STR_LEN("mod_indexfile"));
 			array_insert_unique(prepends->value, (data_unset *)ds);
 		}
-
+		
 		prepends = (data_array *)configparser_merge_data((data_unset *)prepends, (data_unset *)modules);
 		force_assert(NULL != prepends);
 		buffer_copy_buffer(prepends->key, modules->key);
 		array_replace(srv->config, (data_unset *)prepends);
 		modules->free((data_unset *)modules);
 		modules = prepends;
-
+		
 		/* append default modules */
 		if (NULL == array_get_element(modules->value, "mod_dirlisting")) {
 			ds = data_string_init();
@@ -1212,6 +1233,7 @@ int config_read(server *srv, const char *fn) {
 			buffer_copy_string_len(ds->value, CONST_STR_LEN("mod_staticfile"));
 			array_insert_unique(modules->value, (data_unset *)ds);
 		}
+
 	} else {
 		data_string *ds;
 

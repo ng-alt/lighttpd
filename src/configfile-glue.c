@@ -43,7 +43,7 @@ int config_insert_values_internal(server *srv, array *ca, const config_values_t 
 				"DEPRECATED: don't set server options in conditionals, variable:",
 				cv[i].key);
 		}
-
+		
 		switch (cv[i].type) {
 		case T_CONFIG_ARRAY:
 			if (du->type == TYPE_ARRAY) {
@@ -80,7 +80,6 @@ int config_insert_values_internal(server *srv, array *ca, const config_values_t 
 		case T_CONFIG_STRING:
 			if (du->type == TYPE_STRING) {
 				data_string *ds = (data_string *)du;
-
 				buffer_copy_buffer(cv[i].destination, ds->value);
 			} else {
 				log_error_write(srv, __FILE__, __LINE__, "ssss", cv[i].key, "should have been a string like ... = \"...\"");
@@ -207,13 +206,13 @@ int config_insert_values_global(server *srv, array *ca, const config_values_t cv
 
 		/* touched */
 		touched = data_string_init();
-
+		
 		buffer_copy_string_len(touched->value, CONST_STR_LEN(""));
 		buffer_copy_buffer(touched->key, du->key);
 
 		array_insert_unique(srv->config_touched, (data_unset *)touched);
 	}
-
+	
 	return config_insert_values_internal(srv, ca, cv, scope);
 }
 

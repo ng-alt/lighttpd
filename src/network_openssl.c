@@ -11,8 +11,10 @@
 #include <errno.h>
 #include <string.h>
 
-# include <openssl/ssl.h>
-# include <openssl/err.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+
+#define DBE 0
 
 static int load_next_chunk(server *srv, connection *con, chunkqueue *cq, off_t max_bytes, const char **data, size_t *data_len) {
 	chunk * const c = cq->first;
@@ -29,7 +31,7 @@ static int load_next_chunk(server *srv, connection *con, chunkqueue *cq, off_t m
 	static char *local_send_buffer = NULL;
 
 	force_assert(NULL != c);
-
+	
 	switch (c->type) {
 	case MEM_CHUNK:
 		{
@@ -46,6 +48,7 @@ static int load_next_chunk(server *srv, connection *con, chunkqueue *cq, off_t m
 		return 0;
 
 	case FILE_CHUNK:
+		Cdbg(DBE, "FILE_CHUNK: c->file.name=%s", c->file.name->ptr);
 		if (NULL == local_send_buffer) {
 			local_send_buffer = malloc(LOCAL_SEND_BUFSIZE);
 			force_assert(NULL != local_send_buffer);
@@ -72,6 +75,42 @@ static int load_next_chunk(server *srv, connection *con, chunkqueue *cq, off_t m
 				return -1;
 			}
 
+			*data = local_send_buffer;
+			*data_len = toSend;
+		}
+		return 0;
+		
+	case SMB_CHUNK:
+		Cdbg(DBE, "SMB_CHUNK: c->file.name=%s", c->file.name->ptr);
+		if (NULL == local_send_buffer) {
+			local_send_buffer = malloc(LOCAL_SEND_BUFSIZE);
+			force_assert(NULL != local_send_buffer);
+		}
+
+		if (0 != network_open_file_chunk(srv, con, cq)) return -1;
+
+		{
+			off_t offset, toSend;
+
+			force_assert(c->offset >= 0 && c->offset <= c->file.length);
+			offset = c->file.start + c->offset;
+			toSend = c->file.length - c->offset;
+
+			if (toSend > LOCAL_SEND_BUFSIZE) toSend = LOCAL_SEND_BUFSIZE;
+			if (toSend > max_bytes) toSend = max_bytes;
+
+			smbc_wrapper_lseek(con, c->file.fd, offset, SEEK_SET );
+
+			Cdbg(DBE, "c->file.fd=[%d], c->file.length=[%lld]", c->file.fd, c->file.length);
+			Cdbg(DBE, "offset=[%lld], toSend=[%lld]", offset, toSend);
+			
+			if (-1 == (toSend = (size_t)smbc_wrapper_read(con, c->file.fd, local_send_buffer, (size_t)toSend ))) {
+				log_error_write(srv, __FILE__, __LINE__, "ss", "read: ", strerror(errno));
+				smbc_wrapper_close(con, c->file.fd);
+				Cdbg(DBE, "ifd =%d, toSend =%d, errno=%s", c->file.fd, toSend, strerror(errno));
+				return -1;
+			}
+			
 			*data = local_send_buffer;
 			*data_len = toSend;
 		}

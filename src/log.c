@@ -453,3 +453,164 @@ int log_error_write_multiline_buffer(server *srv, const char *filename, unsigned
 
 	return 0;
 }
+
+//- Sungmin add
+/**
+ * open the syslog
+ *
+ * if the open failed, report to the user and die
+ *
+ */
+int log_sys_open(server *srv) {
+	
+	srv->syslog_fd = -1;
+
+	if (!buffer_is_empty(srv->srvconf.syslog_file)) {
+		const char *logfile = srv->srvconf.syslog_file->ptr;		
+		if (-1 == (srv->syslog_fd = open_logfile_or_pipe(srv, logfile))) {
+			return -1;
+		}
+
+		//log_sys_write(srv, "s", "Start syslog...");
+	}
+
+	return 0;
+}
+
+int log_sys_close(server *srv) {
+	if (-1 != srv->syslog_fd) {
+		if (STDERR_FILENO != srv->syslog_fd){
+			close(srv->syslog_fd);
+			srv->syslog_fd = -1;
+		}
+	}
+	return 0;
+}
+
+int log_sys_write(server *srv, const char *fmt, ...) {
+	va_list ap;
+	
+	if (-1 == srv->syslog_fd) return 0;
+
+	buffer* sys_time_str = buffer_init();
+	buffer_string_prepare_copy(sys_time_str, 255);
+
+#if EMBEDDED_EANBLE
+#ifndef APP_IPKG
+	setenv("TZ", nvram_get_time_zone(), 1);
+#else
+	char *time_zone=nvram_get_time_zone();
+	setenv("TZ", time_zone, 1);
+	free(time_zone);
+#endif
+#endif
+	strftime(sys_time_str->ptr, sys_time_str->size - 1, "%b  %d %H:%M:%S", localtime(&(srv->cur_ts)));
+
+	buffer_copy_string(srv->syslog_buf, sys_time_str->ptr);	
+	buffer_free(sys_time_str);
+
+	buffer_append_string_len(srv->syslog_buf, CONST_STR_LEN(" webdav: "));
+	
+	for(va_start(ap, fmt); *fmt; fmt++) {
+		int d;
+		char *s;
+		buffer *b;
+		off_t o;
+
+		switch(*fmt) {
+		case 's':           /* string */
+			s = va_arg(ap, char *);
+			buffer_append_string(srv->syslog_buf, s);
+			buffer_append_string_len(srv->syslog_buf, CONST_STR_LEN(" "));
+			break;
+		case 'b':           /* buffer */
+			b = va_arg(ap, buffer *);
+			buffer* tmp = buffer_init();
+			buffer_reset(tmp);
+			buffer_copy_buffer(tmp, b);
+			buffer_urldecode_path(tmp);
+			buffer_append_string_buffer(srv->syslog_buf, tmp);
+			buffer_append_string_len(srv->syslog_buf, CONST_STR_LEN(" "));
+			buffer_free(tmp);			
+			break;
+		case 'd':           /* int */
+			d = va_arg(ap, int);
+			//buffer_append_long(srv->syslog_buf, d);
+			buffer_append_string_len(srv->syslog_buf, CONST_STR_LEN(" "));
+			break;
+		case 'o':           /* off_t */
+			o = va_arg(ap, off_t);
+			//buffer_append_off_t(srv->syslog_buf, o);
+			buffer_append_string_len(srv->syslog_buf, CONST_STR_LEN(" "));
+			break;
+		case 'x':           /* int (hex) */
+			d = va_arg(ap, int);
+			buffer_append_string_len(srv->syslog_buf, CONST_STR_LEN("0x"));
+			buffer_append_uint_hex(srv->syslog_buf, d);
+			buffer_append_string_len(srv->syslog_buf, CONST_STR_LEN(" "));
+			break;
+		case 'S':           /* string */
+			s = va_arg(ap, char *);
+			buffer_append_string(srv->syslog_buf, s);
+			break;
+		case 'B':           /* buffer */
+			b = va_arg(ap, buffer *);
+			buffer_append_string_buffer(srv->syslog_buf, b);
+			break;
+		case 'D':           /* int */
+			d = va_arg(ap, int);
+			//buffer_append_long(srv->syslog_buf, d);
+			break;
+		case 'O':           /* off_t */
+			o = va_arg(ap, off_t);
+			//buffer_append_off_t(srv->syslog_buf, o);
+			break;
+		case 'X':           /* int (hex) */
+			d = va_arg(ap, int);
+			buffer_append_string_len(srv->syslog_buf, CONST_STR_LEN("0x"));
+			buffer_append_uint_hex(srv->syslog_buf, d);
+			break;
+		case '(':
+		case ')':
+		case '<':
+		case '>':
+		case ',':
+		case ' ':
+			buffer_append_string_len(srv->syslog_buf, fmt, 1);
+			break;
+		}
+	}
+	va_end(ap);
+
+	struct stat st;
+	stat(srv->srvconf.syslog_file->ptr, &st);
+	int file_size = st.st_size;
+	if( file_size >= 1048576 ){//- 1M
+		unlink(srv->srvconf.syslog_file->ptr);
+		if (-1 == log_sys_open(srv)) 
+			return 0;
+	}
+	
+	buffer_append_string_len(srv->syslog_buf, CONST_STR_LEN("\n"));
+	write(srv->syslog_fd, srv->syslog_buf->ptr, srv->syslog_buf->used - 1);
+	
+	return 0;
+}
+
+#ifndef NDEBUG
+//void dprintf_impl(const char* date,const char* time,const char* file,const char* func, size_t line, int enable, const char* fmt, ...)
+void dprintf_impl(const char* file,const char* func, size_t line, int enable, const char* fmt, ...)
+{
+    va_list ap;
+    if (enable) {
+//	   fprintf(stderr, WHERESTR,date, time, file, func, line);
+		fprintf(stderr, WHERESTR, file, func, line);
+        va_start(ap, fmt);
+        vfprintf(stderr, fmt, ap);
+        va_end(ap);
+        fprintf(stderr, "\n");
+        fflush(stderr);
+    }
+}
+#endif
+

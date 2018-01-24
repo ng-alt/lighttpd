@@ -22,6 +22,10 @@
 # include <sys/extattr.h>
 #endif
 
+#ifdef HAVE_LIBSMBCLIENT
+#include <libsmbclient.h>
+#endif
+
 #ifdef HAVE_FAM_H
 # include <fam.h>
 #endif
@@ -40,6 +44,8 @@
 #ifndef HAVE_LSTAT
 # define lstat stat
 #endif
+
+#define DBE 0
 
 #if 0
 /* enables debug code for testing if all nodes in the stat-cache as accessable */
@@ -478,7 +484,19 @@ handler_t stat_cache_get_entry(server *srv, connection *con, buffer *name, stat_
 	 * - stat() if regular file + open() to see if we can read from it is better
 	 *
 	 * */
-	if (-1 == stat(name->ptr, &st)) {
+	int r;
+
+	//- Sungmin add	
+#ifdef HAVE_LIBSMBCLIENT
+	if(con->mode == DIRECT) 
+		r =  stat(name->ptr, &st);
+	else if(con->mode == SMB_NTLM||con->mode == SMB_BASIC)
+		r = smbc_wrapper_stat(con, name->ptr, &st);
+#else
+	r =  stat(name->ptr, &st);
+#endif
+
+	if (r == -1) {
 		return HANDLER_ERROR;
 	}
 
@@ -491,10 +509,43 @@ handler_t stat_cache_get_entry(server *srv, connection *con, buffer *name, stat_
 		}
 
 		/* try to open the file to check if we can read it */
+		//- Sungmin add
+#ifdef HAVE_LIBSMBCLIENT		
+		if(con->mode == DIRECT) {
+			fd = open(name->ptr, O_RDONLY);
+			if(fd == -1) {
+				return HANDLER_ERROR;
+			}
+			close(fd);
+		}
+		else if(con->mode == SMB_NTLM) {
+			smb_file_t *fp;
+			fp = smbc_cli_ntcreate(con->smb_info->cli, name->ptr, 
+				FILE_READ_DATA | FILE_WRITE_DATA, FILE_OPEN, 0);
+			if(fp == NULL) {
+				return HANDLER_ERROR;
+			}
+			smbc_cli_close(con->smb_info->cli, fp);
+		}
+		else {
+			//Cdbg(DBE, "call smbc_open..%s", con->smb_info->url.path->ptr);			
+			//Cdbg(DBE, "call smbc_open..%s", name->ptr);			
+
+			//fd = smbc_open(con->smb_info->url.path->ptr, O_RDONLY, 0);
+			fd = smbc_open(name->ptr, O_RDONLY, 0);
+			
+			if(fd == -1) {
+				return HANDLER_ERROR;
+			}
+			
+			smbc_close(fd);
+		}
+#else
 		if (-1 == (fd = open(name->ptr, O_RDONLY))) {
 			return HANDLER_ERROR;
 		}
 		close(fd);
+#endif		
 	}
 
 	if (NULL == sce) {

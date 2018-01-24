@@ -126,7 +126,7 @@ static void rewrite_rule_buffer_free(rewrite_rule_buffer *kvb) {
 
 INIT_FUNC(mod_rewrite_init) {
 	plugin_data *p;
-
+	
 	p = calloc(1, sizeof(*p));
 
 	p->match_buf = buffer_init();
@@ -136,7 +136,7 @@ INIT_FUNC(mod_rewrite_init) {
 
 FREE_FUNC(mod_rewrite_free) {
 	plugin_data *p = p_d;
-
+	
 	UNUSED(srv);
 
 	if (!p) return HANDLER_GO_ON;
@@ -216,6 +216,7 @@ static int parse_config_entry(server *srv, array *ca, const char *option) {
 
 SETDEFAULTS_FUNC(mod_rewrite_set_defaults) {
 	size_t i = 0;
+	
 	config_values_t cv[] = {
 		{ "url.rewrite-repeat",        NULL, T_CONFIG_LOCAL, T_CONFIG_SCOPE_CONNECTION }, /* 0 */
 		{ "url.rewrite-once",          NULL, T_CONFIG_LOCAL, T_CONFIG_SCOPE_CONNECTION }, /* 1 */

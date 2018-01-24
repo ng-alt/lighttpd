@@ -954,6 +954,7 @@ URIHANDLER_FUNC(mod_dirlisting_subrequest) {
 
 int mod_dirlisting_plugin_init(plugin *p);
 int mod_dirlisting_plugin_init(plugin *p) {
+	
 	p->version     = LIGHTTPD_VERSION_ID;
 	p->name        = buffer_init_string("dirlisting");
 

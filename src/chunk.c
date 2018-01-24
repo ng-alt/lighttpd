@@ -20,6 +20,8 @@
 #include <errno.h>
 #include <string.h>
 
+#define DBE 0
+
 chunkqueue *chunkqueue_init(void) {
 	chunkqueue *cq;
 
@@ -65,14 +67,24 @@ static void chunk_reset(chunk *c) {
 
 	buffer_reset(c->file.name);
 
-	if (c->file.fd != -1) {
-		close(c->file.fd);
-		c->file.fd = -1;
+	if(c->type == SMB_CHUNK){
+		if (c->file.fd != -1) {
+			smbc_close(c->file.fd);
+			Cdbg(DBE,"close smb file-------------------------------->remote computer");
+			c->file.fd = -1;
+		}
 	}
-	if (MAP_FAILED != c->file.mmap.start) {
-		munmap(c->file.mmap.start, c->file.mmap.length);
-		c->file.mmap.start = MAP_FAILED;
+	else{
+		if (c->file.fd != -1) {
+			close(c->file.fd);
+			c->file.fd = -1;
+		}
+		if (MAP_FAILED != c->file.mmap.start) {
+			munmap(c->file.mmap.start, c->file.mmap.length);
+			c->file.mmap.start = MAP_FAILED;
+		}
 	}
+	
 	c->file.start = c->file.length = c->file.mmap.offset = 0;
 	c->file.mmap.length = 0;
 	c->file.is_temp = 0;
@@ -98,10 +110,11 @@ static off_t chunk_remaining_length(const chunk *c) {
 		len = buffer_string_length(c->mem);
 		break;
 	case FILE_CHUNK:
+	case SMB_CHUNK:
 		len = c->file.length;
 		break;
 	default:
-		force_assert(c->type == MEM_CHUNK || c->type == FILE_CHUNK);
+		force_assert(c->type == MEM_CHUNK || c->type == FILE_CHUNK || c->type == SMB_CHUNK);
 		break;
 	}
 	force_assert(c->offset <= len);
@@ -199,6 +212,24 @@ void chunkqueue_reset(chunkqueue *cq) {
 	cq->bytes_out = 0;
 }
 
+//- Sungmin add
+void chunkqueue_append_smb_file(chunkqueue *cq, buffer *fn, off_t offset, off_t len) {
+	chunk *c;
+
+	if (0 == len) return;
+
+	c = chunkqueue_get_unused_chunk(cq);
+
+	c->type = SMB_CHUNK;
+
+	buffer_copy_buffer(c->file.name, fn);	
+	c->file.start = offset;	
+	c->file.length = len;	
+	c->offset = 0;
+		
+	chunkqueue_append_chunk(cq, c);
+}
+
 void chunkqueue_append_file(chunkqueue *cq, buffer *fn, off_t offset, off_t len) {
 	chunk *c;
 
@@ -210,9 +241,9 @@ void chunkqueue_append_file(chunkqueue *cq, buffer *fn, off_t offset, off_t len)
 
 	buffer_copy_buffer(c->file.name, fn);
 	c->file.start = offset;
-	c->file.length = len;
+	c->file.length = len;	
 	c->offset = 0;
-
+	
 	chunkqueue_append_chunk(cq, c);
 }
 

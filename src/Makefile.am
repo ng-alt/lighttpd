@@ -1,12 +1,17 @@
 AM_CFLAGS = $(FAM_CFLAGS) $(LIBUNWIND_CFLAGS)
 
 noinst_PROGRAMS=proc_open lemon # simple-fcgi #graphic evalo bench ajp ssl error_test adserver gen-license
-sbin_PROGRAMS=lighttpd lighttpd-angel
+sbin_PROGRAMS=lighttpd lighttpd-angel lighttpd-monitor lighttpd-arpping
 LEMON=$(top_builddir)/src/lemon$(EXEEXT)
 
 lemon_SOURCES=lemon.c
 
 lighttpd_angel_SOURCES=lighttpd-angel.c
+
+lighttpd_monitor_SOURCES=buffer.c lighttpd-monitor.c nvram_control.c
+
+lighttpd_arpping_SOURCES=buffer.c arpping_thread.c nvram_control.c
+lighttpd_arpping_LDFLAGS= -lsmbclient
 
 .PHONY: versionstamp parsers
 
@@ -76,7 +81,8 @@ common_src=base64.c buffer.c log.c \
 	network_freebsd_sendfile.c network_writev.c \
 	network_solaris_sendfilev.c network_openssl.c \
 	splaytree.c status_counter.c \
-	safe_memclear.c network_darwin_sendfile.c
+	safe_memclear.c network_darwin_sendfile.c \
+    smb_auth.c nvram_control.c
 
 src = server.c response.c connections.c network.c \
 	configfile.c configparser.c request.c proc_open.c
@@ -98,54 +104,57 @@ src += $(common_src)
 common_libadd =
 endif
 
-lib_LTLIBRARIES += mod_flv_streaming.la
-mod_flv_streaming_la_SOURCES = mod_flv_streaming.c
-mod_flv_streaming_la_LDFLAGS = -module -export-dynamic -avoid-version
-mod_flv_streaming_la_LIBADD = $(common_libadd)
+LIBS += $(LIBSMBCLIENT_LIBS) $(XML_LIBS) $(SHARED_LIBS)
+CFLAGS += $(LIBSMBCLIENT_CFLAGS) $(XML_CFLAGS)
 
-lib_LTLIBRARIES += mod_evasive.la
-mod_evasive_la_SOURCES = mod_evasive.c
-mod_evasive_la_LDFLAGS = -module -export-dynamic -avoid-version
-mod_evasive_la_LIBADD = $(common_libadd)
+#lib_LTLIBRARIES += mod_flv_streaming.la
+#mod_flv_streaming_la_SOURCES = mod_flv_streaming.c
+#mod_flv_streaming_la_LDFLAGS = -module -export-dynamic -avoid-version
+#mod_flv_streaming_la_LIBADD = $(common_libadd)
+
+#lib_LTLIBRARIES += mod_evasive.la
+#mod_evasive_la_SOURCES = mod_evasive.c
+#mod_evasive_la_LDFLAGS = -module -export-dynamic -avoid-version
+#mod_evasive_la_LIBADD = $(common_libadd)
 
 lib_LTLIBRARIES += mod_webdav.la
 mod_webdav_la_SOURCES = mod_webdav.c
 mod_webdav_la_CFLAGS = $(AM_CFLAGS) $(XML_CFLAGS) $(SQLITE_CFLAGS) 
 mod_webdav_la_LDFLAGS = -module -export-dynamic -avoid-version
-mod_webdav_la_LIBADD = $(common_libadd) $(XML_LIBS) $(SQLITE_LIBS) $(UUID_LIBS)
+mod_webdav_la_LIBADD = $(common_libadd) $(XML_LIBS) $(SQLITE_LIBS) $(UUID_LIBS) $(sql_libadd) -lcurl
 
-lib_LTLIBRARIES += mod_magnet.la
-mod_magnet_la_SOURCES = mod_magnet.c mod_magnet_cache.c
-mod_magnet_la_CFLAGS = $(AM_CFLAGS) $(LUA_CFLAGS)
-mod_magnet_la_LDFLAGS = -module -export-dynamic -avoid-version
-mod_magnet_la_LIBADD = $(common_libadd) $(LUA_LIBS) -lm
+#lib_LTLIBRARIES += mod_magnet.la
+#mod_magnet_la_SOURCES = mod_magnet.c mod_magnet_cache.c
+#mod_magnet_la_CFLAGS = $(AM_CFLAGS) $(LUA_CFLAGS)
+#mod_magnet_la_LDFLAGS = -module -export-dynamic -avoid-version
+#mod_magnet_la_LIBADD = $(common_libadd) $(LUA_LIBS) -lm
 
-lib_LTLIBRARIES += mod_cml.la
-mod_cml_la_SOURCES = mod_cml.c mod_cml_lua.c mod_cml_funcs.c
-mod_cml_la_CFLAGS = $(AM_CFLAGS) $(LUA_CFLAGS)
-mod_cml_la_LDFLAGS = -module -export-dynamic -avoid-version
-mod_cml_la_LIBADD = $(MEMCACHE_LIB) $(common_libadd) $(LUA_LIBS) -lm
+#lib_LTLIBRARIES += mod_cml.la
+#mod_cml_la_SOURCES = mod_cml.c mod_cml_lua.c mod_cml_funcs.c
+#mod_cml_la_CFLAGS = $(AM_CFLAGS) $(LUA_CFLAGS)
+#mod_cml_la_LDFLAGS = -module -export-dynamic -avoid-version
+#mod_cml_la_LIBADD = $(MEMCACHE_LIB) $(common_libadd) $(LUA_LIBS) -lm
 
-lib_LTLIBRARIES += mod_trigger_b4_dl.la
-mod_trigger_b4_dl_la_SOURCES = mod_trigger_b4_dl.c
-mod_trigger_b4_dl_la_LDFLAGS = -module -export-dynamic -avoid-version
-mod_trigger_b4_dl_la_LIBADD = $(GDBM_LIB) $(MEMCACHE_LIB) $(PCRE_LIB) $(common_libadd)
+#lib_LTLIBRARIES += mod_trigger_b4_dl.la
+#mod_trigger_b4_dl_la_SOURCES = mod_trigger_b4_dl.c
+#mod_trigger_b4_dl_la_LDFLAGS = -module -export-dynamic -avoid-version
+#mod_trigger_b4_dl_la_LIBADD = $(GDBM_LIB) $(MEMCACHE_LIB) $(PCRE_LIB) $(common_libadd)
 
-lib_LTLIBRARIES += mod_mysql_vhost.la
-mod_mysql_vhost_la_SOURCES = mod_mysql_vhost.c
-mod_mysql_vhost_la_LDFLAGS = -module -export-dynamic -avoid-version
-mod_mysql_vhost_la_LIBADD = $(MYSQL_LIBS) $(common_libadd)
-mod_mysql_vhost_la_CPPFLAGS = $(MYSQL_INCLUDE)
+#lib_LTLIBRARIES += mod_mysql_vhost.la
+#mod_mysql_vhost_la_SOURCES = mod_mysql_vhost.c
+#mod_mysql_vhost_la_LDFLAGS = -module -export-dynamic -avoid-version
+#mod_mysql_vhost_la_LIBADD = $(MYSQL_LIBS) $(common_libadd)
+#mod_mysql_vhost_la_CPPFLAGS = $(MYSQL_INCLUDE)
 
-lib_LTLIBRARIES += mod_cgi.la
-mod_cgi_la_SOURCES = mod_cgi.c
-mod_cgi_la_LDFLAGS = -module -export-dynamic -avoid-version
-mod_cgi_la_LIBADD = $(common_libadd)
+#lib_LTLIBRARIES += mod_cgi.la
+#mod_cgi_la_SOURCES = mod_cgi.c
+#mod_cgi_la_LDFLAGS = -module -export-dynamic -avoid-version
+#mod_cgi_la_LIBADD = $(common_libadd)
 
-lib_LTLIBRARIES += mod_scgi.la
-mod_scgi_la_SOURCES = mod_scgi.c
-mod_scgi_la_LDFLAGS = -module -export-dynamic -avoid-version
-mod_scgi_la_LIBADD = $(common_libadd)
+#lib_LTLIBRARIES += mod_scgi.la
+#mod_scgi_la_SOURCES = mod_scgi.c
+#mod_scgi_la_LDFLAGS = -module -export-dynamic -avoid-version
+#mod_scgi_la_LIBADD = $(common_libadd)
 
 lib_LTLIBRARIES += mod_staticfile.la
 mod_staticfile_la_SOURCES = mod_staticfile.c
@@ -162,75 +171,75 @@ mod_indexfile_la_SOURCES = mod_indexfile.c
 mod_indexfile_la_LDFLAGS = -module -export-dynamic -avoid-version
 mod_indexfile_la_LIBADD = $(common_libadd)
 
-lib_LTLIBRARIES += mod_setenv.la
-mod_setenv_la_SOURCES = mod_setenv.c
-mod_setenv_la_LDFLAGS = -module -export-dynamic -avoid-version
-mod_setenv_la_LIBADD = $(common_libadd)
+#lib_LTLIBRARIES += mod_setenv.la
+#mod_setenv_la_SOURCES = mod_setenv.c
+#mod_setenv_la_LDFLAGS = -module -export-dynamic -avoid-version
+#mod_setenv_la_LIBADD = $(common_libadd)
 
 lib_LTLIBRARIES += mod_alias.la
 mod_alias_la_SOURCES = mod_alias.c
 mod_alias_la_LDFLAGS = -module -export-dynamic -avoid-version
 mod_alias_la_LIBADD = $(common_libadd)
 
-lib_LTLIBRARIES += mod_userdir.la
-mod_userdir_la_SOURCES = mod_userdir.c
-mod_userdir_la_LDFLAGS = -module -export-dynamic -avoid-version
-mod_userdir_la_LIBADD = $(common_libadd)
+#lib_LTLIBRARIES += mod_userdir.la
+#mod_userdir_la_SOURCES = mod_userdir.c
+#mod_userdir_la_LDFLAGS = -module -export-dynamic -avoid-version
+#mod_userdir_la_LIBADD = $(common_libadd)
 
-lib_LTLIBRARIES += mod_rrdtool.la
-mod_rrdtool_la_SOURCES = mod_rrdtool.c
-mod_rrdtool_la_LDFLAGS = -module -export-dynamic -avoid-version
-mod_rrdtool_la_LIBADD = $(common_libadd)
+#lib_LTLIBRARIES += mod_rrdtool.la
+#mod_rrdtool_la_SOURCES = mod_rrdtool.c
+#mod_rrdtool_la_LDFLAGS = -module -export-dynamic -avoid-version
+#mod_rrdtool_la_LIBADD = $(common_libadd)
 
-lib_LTLIBRARIES += mod_usertrack.la
-mod_usertrack_la_SOURCES = mod_usertrack.c
-mod_usertrack_la_LDFLAGS = -module -export-dynamic -avoid-version
-mod_usertrack_la_LIBADD = $(common_libadd)
+#lib_LTLIBRARIES += mod_usertrack.la
+#mod_usertrack_la_SOURCES = mod_usertrack.c
+#mod_usertrack_la_LDFLAGS = -module -export-dynamic -avoid-version
+#mod_usertrack_la_LIBADD = $(common_libadd)
 
-lib_LTLIBRARIES += mod_proxy.la
-mod_proxy_la_SOURCES = mod_proxy.c
-mod_proxy_la_LDFLAGS = -module -export-dynamic -avoid-version
-mod_proxy_la_LIBADD = $(common_libadd)
+#lib_LTLIBRARIES += mod_proxy.la
+#mod_proxy_la_SOURCES = mod_proxy.c
+#mod_proxy_la_LDFLAGS = -module -export-dynamic -avoid-version
+#mod_proxy_la_LIBADD = $(common_libadd)
 
-lib_LTLIBRARIES += mod_ssi.la
-mod_ssi_la_SOURCES = mod_ssi_exprparser.c mod_ssi_expr.c mod_ssi.c
-mod_ssi_la_LDFLAGS = -module -export-dynamic -avoid-version
-mod_ssi_la_LIBADD = $(common_libadd) $(PCRE_LIB)
+#lib_LTLIBRARIES += mod_ssi.la
+#mod_ssi_la_SOURCES = mod_ssi_exprparser.c mod_ssi_expr.c mod_ssi.c
+#mod_ssi_la_LDFLAGS = -module -export-dynamic -avoid-version
+#mod_ssi_la_LIBADD = $(common_libadd) $(PCRE_LIB)
 
-lib_LTLIBRARIES += mod_secdownload.la
-mod_secdownload_la_SOURCES = mod_secdownload.c
-mod_secdownload_la_LDFLAGS = -module -export-dynamic -avoid-version
-mod_secdownload_la_LIBADD = $(common_libadd)
+#lib_LTLIBRARIES += mod_secdownload.la
+#mod_secdownload_la_SOURCES = mod_secdownload.c
+#mod_secdownload_la_LDFLAGS = -module -export-dynamic -avoid-version
+#mod_secdownload_la_LIBADD = $(common_libadd)
 
 #lib_LTLIBRARIES += mod_httptls.la
 #mod_httptls_la_SOURCES = mod_httptls.c
 #mod_httptls_la_LDFLAGS = -module -export-dynamic -avoid-version
 #mod_httptls_la_LIBADD = $(common_libadd)
 
-lib_LTLIBRARIES += mod_expire.la
-mod_expire_la_SOURCES = mod_expire.c
-mod_expire_la_LDFLAGS = -module -export-dynamic -avoid-version
-mod_expire_la_LIBADD = $(common_libadd)
+#lib_LTLIBRARIES += mod_expire.la
+#mod_expire_la_SOURCES = mod_expire.c
+#mod_expire_la_LDFLAGS = -module -export-dynamic -avoid-version
+#mod_expire_la_LIBADD = $(common_libadd)
 
-lib_LTLIBRARIES += mod_evhost.la
-mod_evhost_la_SOURCES = mod_evhost.c
-mod_evhost_la_LDFLAGS = -module -export-dynamic -avoid-version
-mod_evhost_la_LIBADD = $(common_libadd)
+#lib_LTLIBRARIES += mod_evhost.la
+#mod_evhost_la_SOURCES = mod_evhost.c
+#mod_evhost_la_LDFLAGS = -module -export-dynamic -avoid-version
+#mod_evhost_la_LIBADD = $(common_libadd)
 
-lib_LTLIBRARIES += mod_simple_vhost.la
-mod_simple_vhost_la_SOURCES = mod_simple_vhost.c
-mod_simple_vhost_la_LDFLAGS = -module -export-dynamic -avoid-version
-mod_simple_vhost_la_LIBADD = $(common_libadd)
+#lib_LTLIBRARIES += mod_simple_vhost.la
+#mod_simple_vhost_la_SOURCES = mod_simple_vhost.c
+#mod_simple_vhost_la_LDFLAGS = -module -export-dynamic -avoid-version
+#mod_simple_vhost_la_LIBADD = $(common_libadd)
 
-lib_LTLIBRARIES += mod_fastcgi.la
-mod_fastcgi_la_SOURCES = mod_fastcgi.c
-mod_fastcgi_la_LDFLAGS = -module -export-dynamic -avoid-version
-mod_fastcgi_la_LIBADD = $(common_libadd)
+#lib_LTLIBRARIES += mod_fastcgi.la
+#mod_fastcgi_la_SOURCES = mod_fastcgi.c
+#mod_fastcgi_la_LDFLAGS = -module -export-dynamic -avoid-version
+#mod_fastcgi_la_LIBADD = $(common_libadd)
 
-lib_LTLIBRARIES += mod_extforward.la
-mod_extforward_la_SOURCES = mod_extforward.c
-mod_extforward_la_LDFLAGS = -module -export-dynamic -avoid-version
-mod_extforward_la_LIBADD = $(common_libadd)
+#lib_LTLIBRARIES += mod_extforward.la
+#mod_extforward_la_SOURCES = mod_extforward.c
+#mod_extforward_la_LDFLAGS = -module -export-dynamic -avoid-version
+#mod_extforward_la_LIBADD = $(common_libadd)
 
 lib_LTLIBRARIES += mod_access.la
 mod_access_la_SOURCES = mod_access.c
@@ -247,26 +256,33 @@ mod_auth_la_SOURCES = mod_auth.c http_auth.c
 mod_auth_la_LDFLAGS = -module -export-dynamic -avoid-version
 mod_auth_la_LIBADD = $(CRYPT_LIB) $(SSL_LIB) $(LDAP_LIB) $(LBER_LIB) $(common_libadd)
 
-lib_LTLIBRARIES += mod_rewrite.la
-mod_rewrite_la_SOURCES = mod_rewrite.c
-mod_rewrite_la_LDFLAGS = -module -export-dynamic -avoid-version
-mod_rewrite_la_LIBADD = $(PCRE_LIB) $(common_libadd)
+#lib_LTLIBRARIES += mod_rewrite.la
+#mod_rewrite_la_SOURCES = mod_rewrite.c
+#mod_rewrite_la_LDFLAGS = -module -export-dynamic -avoid-version
+#mod_rewrite_la_LIBADD = $(PCRE_LIB) $(common_libadd)
 
-lib_LTLIBRARIES += mod_redirect.la
-mod_redirect_la_SOURCES = mod_redirect.c
-mod_redirect_la_LDFLAGS = -module -export-dynamic -avoid-version
-mod_redirect_la_LIBADD = $(PCRE_LIB) $(common_libadd)
+#lib_LTLIBRARIES += mod_redirect.la
+#mod_redirect_la_SOURCES = mod_redirect.c
+#mod_redirect_la_LDFLAGS = -module -export-dynamic -avoid-version
+#mod_redirect_la_LIBADD = $(PCRE_LIB) $(common_libadd)
 
-lib_LTLIBRARIES += mod_status.la
-mod_status_la_SOURCES = mod_status.c
-mod_status_la_LDFLAGS = -module -export-dynamic -avoid-version
-mod_status_la_LIBADD = $(common_libadd)
+#lib_LTLIBRARIES += mod_status.la
+#mod_status_la_SOURCES = mod_status.c
+#mod_status_la_LDFLAGS = -module -export-dynamic -avoid-version
+#mod_status_la_LIBADD = $(common_libadd)
 
-lib_LTLIBRARIES += mod_accesslog.la
-mod_accesslog_la_SOURCES = mod_accesslog.c
-mod_accesslog_la_LDFLAGS = -module -export-dynamic -avoid-version
-mod_accesslog_la_LIBADD = $(common_libadd)
+#lib_LTLIBRARIES += mod_accesslog.la
+#mod_accesslog_la_SOURCES = mod_accesslog.c
+#mod_accesslog_la_LDFLAGS = -module -export-dynamic -avoid-version
+#mod_accesslog_la_LIBADD = $(common_libadd)
 
+#Sungmin add
+lib_LTLIBRARIES += liblightsql.la
+liblightsql_la_SOURCES = sql.c
+liblightsql_la_CFLAGS=$(SQLITE_CFLAGS)
+liblightsql_la_LDFLAGS = -module -export-dynamic -avoid-version -no-undefined
+liblightsql_la_LIBADD = $(common_libadd) $(SQLITE_LIBS)
+sql_libadd = liblightsql.la
 
 hdr = server.h base64.h buffer.h network.h log.h keyvalue.h \
 	response.h request.h fastcgi.h chunk.h \
@@ -281,12 +297,13 @@ hdr = server.h base64.h buffer.h network.h log.h keyvalue.h \
 	sys-mmap.h sys-socket.h mod_cml.h mod_cml_funcs.h \
 	safe_memclear.h splaytree.h proc_open.h status_counter.h \
 	mod_magnet_cache.h \
-	version.h
+	version.h \
+    nvram_control.h 
 
 DEFS= @DEFS@ -DHAVE_VERSION_H -DLIBRARY_DIR="\"$(libdir)\"" -DSBIN_DIR="\"$(sbindir)\""
 
 lighttpd_SOURCES = $(src)
-lighttpd_LDADD = $(PCRE_LIB) $(DL_LIB) $(SENDFILE_LIB) $(ATTR_LIB) $(common_libadd) $(SSL_LIB) $(FAM_LIBS) $(LIBEV_LIBS) $(LIBUNWIND_LIBS)
+lighttpd_LDADD = $(PCRE_LIB) $(DL_LIB) $(SENDFILE_LIB) $(ATTR_LIB) $(common_libadd) $(SSL_LIB) $(FAM_LIBS) $(LIBEV_LIBS) $(LIBUNWIND_LIBS) $(SQLITE_LIBS)
 lighttpd_LDFLAGS = -export-dynamic
 lighttpd_CCPFLAGS = $(FAM_CFLAGS) $(LIBEV_CFLAGS)
 

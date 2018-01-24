@@ -10,12 +10,18 @@
 #include <errno.h>
 #include <string.h>
 
+#ifdef HAVE_LIBSMBCLIENT_H
+#include <libsmbclient.h>
+#endif
+
+#define DBE 1
+
 int network_write_mem_chunk(server *srv, connection *con, int fd, chunkqueue *cq, off_t *p_max_bytes) {
 	chunk* const c = cq->first;
 	off_t c_len;
 	ssize_t r;
 	UNUSED(con);
-
+	
 	force_assert(NULL != c);
 	force_assert(MEM_CHUNK == c->type);
 	force_assert(c->offset >= 0 && c->offset <= (off_t)buffer_string_length(c->mem));
@@ -80,7 +86,7 @@ int network_write_chunkqueue_write(server *srv, connection *con, int fd, chunkqu
 			break;
 		case FILE_CHUNK:
 			r = network_write_file_chunk_mmap(srv, con, fd, cq, &max_bytes);
-			break;
+			break;		
 		}
 
 		if (-3 == r) return 0;
@@ -93,13 +99,18 @@ int network_write_chunkqueue_write(server *srv, connection *con, int fd, chunkqu
 int network_write_chunkqueue_sendfile(server *srv, connection *con, int fd, chunkqueue *cq, off_t max_bytes) {
 	while (max_bytes > 0 && NULL != cq->first) {
 		int r = -1;
-
+		
 		switch (cq->first->type) {
 		case MEM_CHUNK:
 			r = network_writev_mem_chunks(srv, con, fd, cq, &max_bytes);
 			break;
 		case FILE_CHUNK:
 			r = network_write_file_chunk_sendfile(srv, con, fd, cq, &max_bytes);
+			break;
+		case SMB_CHUNK:
+#ifndef EMBEDDED_EANBLE
+			r = network_write_smbfile_chunk_sendfile(srv, con, fd, cq, &max_bytes);			
+#endif
 			break;
 		}
 

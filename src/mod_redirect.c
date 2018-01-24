@@ -28,7 +28,7 @@ typedef struct {
 
 INIT_FUNC(mod_redirect_init) {
 	plugin_data *p;
-
+	
 	p = calloc(1, sizeof(*p));
 
 	p->match_buf = buffer_init();
@@ -68,7 +68,7 @@ FREE_FUNC(mod_redirect_free) {
 SETDEFAULTS_FUNC(mod_redirect_set_defaults) {
 	plugin_data *p = p_d;
 	size_t i = 0;
-
+	
 	config_values_t cv[] = {
 		{ "url.redirect",               NULL, T_CONFIG_LOCAL, T_CONFIG_SCOPE_CONNECTION }, /* 0 */
 		{ "url.redirect-code",          NULL, T_CONFIG_SHORT, T_CONFIG_SCOPE_CONNECTION }, /* 1 */
@@ -277,6 +277,7 @@ static handler_t mod_redirect_uri_handler(server *srv, connection *con, void *p_
 
 int mod_redirect_plugin_init(plugin *p);
 int mod_redirect_plugin_init(plugin *p) {
+	
 	p->version     = LIGHTTPD_VERSION_ID;
 	p->name        = buffer_init_string("redirect");
 

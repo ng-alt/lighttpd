@@ -214,7 +214,7 @@ handler_t http_response_prepare(server *srv, connection *con) {
 	handler_t r;
 
 	/* looks like someone has already done a decision */
-	if (con->mode == DIRECT &&
+	if ((con->mode == DIRECT || con->mode == SMB_BASIC || con->mode == SMB_NTLM) &&
 	    (con->http_status != 0 && con->http_status != 200)) {
 		/* remove a packets in the queue */
 		if (con->file_finished == 0) {
@@ -225,7 +225,7 @@ handler_t http_response_prepare(server *srv, connection *con) {
 	}
 
 	/* no decision yet, build conf->filename */
-	if (con->mode == DIRECT && buffer_is_empty(con->physical.path)) {
+	if ((con->mode == DIRECT || con->mode == SMB_BASIC || con->mode == SMB_NTLM) && buffer_is_empty(con->physical.path)) {
 		char *qstr;
 
 		/* we only come here when we have the parse the full request again
@@ -546,8 +546,7 @@ handler_t http_response_prepare(server *srv, connection *con) {
 	 *
 	 * Go on and check of the file exists at all
 	 */
-
-	if (con->mode == DIRECT) {
+	if (con->mode == DIRECT || con->mode == SMB_BASIC || con->mode == SMB_NTLM) {
 		char *slash = NULL;
 		char *pathinfo = NULL;
 		int found = 0;
@@ -557,8 +556,8 @@ handler_t http_response_prepare(server *srv, connection *con) {
 			log_error_write(srv, __FILE__, __LINE__,  "s",  "-- handling physical path");
 			log_error_write(srv, __FILE__, __LINE__,  "sb", "Path         :", con->physical.path);
 		}
-
-		if (HANDLER_ERROR != stat_cache_get_entry(srv, con, con->physical.path, &sce)) {
+		
+		if ( HANDLER_ERROR != stat_cache_get_entry(srv, con, smbc_wrapper_physical_url_path(srv, con), &sce)) {
 			/* file exists */
 
 			if (con->conf.log_request_handling) {
@@ -568,7 +567,7 @@ handler_t http_response_prepare(server *srv, connection *con) {
 #ifdef HAVE_LSTAT
 			if ((sce->is_symlink != 0) && !con->conf.follow_symlink) {
 				con->http_status = 403;
-
+				
 				if (con->conf.log_request_handling) {
 					log_error_write(srv, __FILE__, __LINE__,  "s",  "-- access denied due symlink restriction");
 					log_error_write(srv, __FILE__, __LINE__,  "sb", "Path         :", con->physical.path);
@@ -599,7 +598,7 @@ handler_t http_response_prepare(server *srv, connection *con) {
 			switch (errno) {
 			case EACCES:
 				con->http_status = 403;
-
+				
 				if (con->conf.log_request_handling) {
 					log_error_write(srv, __FILE__, __LINE__,  "s",  "-- access denied");
 					log_error_write(srv, __FILE__, __LINE__,  "sb", "Path         :", con->physical.path);
@@ -682,7 +681,7 @@ handler_t http_response_prepare(server *srv, connection *con) {
 #ifdef HAVE_LSTAT
 			if ((sce->is_symlink != 0) && !con->conf.follow_symlink) {
 				con->http_status = 403;
-
+				
 				if (con->conf.log_request_handling) {
 					log_error_write(srv, __FILE__, __LINE__,  "s",  "-- access denied due symlink restriction");
 					log_error_write(srv, __FILE__, __LINE__,  "sb", "Path         :", con->physical.path);
@@ -734,7 +733,7 @@ handler_t http_response_prepare(server *srv, connection *con) {
 
 		/* if we are still here, no one wanted the file, status 403 is ok I think */
 
-		if (con->mode == DIRECT && con->http_status == 0) {
+		if ((con->mode == DIRECT || con->mode == SMB_BASIC || con->mode == SMB_NTLM) && con->http_status == 0) {
 			switch (con->request.http_method) {
 			case HTTP_METHOD_OPTIONS:
 				con->http_status = 200;

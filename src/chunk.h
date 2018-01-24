@@ -4,8 +4,15 @@
 #include "buffer.h"
 #include "array.h"
 
+typedef enum { 
+	UNUSED_CHUNK, 
+	MEM_CHUNK, 
+	FILE_CHUNK,
+	SMB_CHUNK
+} CHUNK_TYPE;
+
 typedef struct chunk {
-	enum { MEM_CHUNK, FILE_CHUNK } type;
+	CHUNK_TYPE type;
 
 	buffer *mem; /* either the storage of the mem-chunk or the read-ahead buffer */
 

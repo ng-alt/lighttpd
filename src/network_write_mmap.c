@@ -1,3 +1,4 @@
+
 #include "network_backends.h"
 
 #include "network.h"
@@ -12,6 +13,12 @@
 #include <string.h>
 
 #define MMAP_CHUNK_SIZE (512*1024)
+
+#ifdef HAVE_LIBSMBCLIENT_H
+#include <libsmbclient.h>
+#endif
+
+#define DBE 0
 
 off_t mmap_align_offset(off_t start) {
 	static long pagesize = 0;
@@ -206,3 +213,113 @@ int network_write_file_chunk_mmap(server *srv, connection *con, int fd, chunkque
 }
 
 #endif /* USE_MMAP */
+
+int network_write_smbfile_chunk_mmap(server *srv, connection *con, int fd, chunkqueue *cq, off_t *p_max_bytes) {
+
+	
+	chunk* const c = cq->first;
+	ssize_t r;
+	off_t offset;
+	off_t toSend;
+	stat_cache_entry *sce = NULL;
+	//off_t buffer_size = 256*1024;
+	off_t buffer_size = 512*1024;
+	char* buff = NULL;
+#ifdef HAVE_LIBSMBCLIENT_H
+
+	force_assert(NULL != c);
+	force_assert(SMB_CHUNK == c->type);
+	force_assert(c->offset >= 0 && c->offset <= c->file.length);
+	
+	Cdbg(DBE, "*****************************************");
+	
+	offset = c->file.start + c->offset;
+	toSend = ( c->file.length - c->offset > buffer_size) ? buffer_size : c->file.length - c->offset;
+			
+	if (toSend > *p_max_bytes) toSend = *p_max_bytes;
+	
+	if (0 == toSend) {
+		chunkqueue_remove_finished_chunks(cq);
+		return 0;
+	}
+		
+	if (0 != network_open_file_chunk(srv, con, cq)) return -1;
+
+	buff = malloc(buffer_size);
+	
+	if(buff==NULL){
+		Cdbg(DBE, "malloc fail");
+		chunkqueue_remove_finished_chunks(cq);
+		return 0;
+	}
+	
+	memset(buff, '\0', buffer_size);		
+
+	Cdbg(DBE, "size of off_t=%d", sizeof(off_t));
+	Cdbg(DBE, "c->file.fd=[%d], c->file.length=[%lld]", c->file.fd, c->file.length);
+
+	smbc_wrapper_lseek(con, c->file.fd, offset, SEEK_SET );
+	
+	Cdbg(DBE, "offset=[%lld], toSend=[%lld]", offset, toSend);
+	r = smbc_wrapper_read(con, c->file.fd, buff, (size_t)toSend);
+	
+	Cdbg(DBE, "read complete, r=[%lld]", r);
+	
+	if( toSend == -1 || r < 0 ) {
+
+		free(buff);
+		
+		smbc_wrapper_close(con, c->file.fd);
+		
+		switch (errno) {
+		case EAGAIN:
+		case EINTR:
+			break;
+		case EPIPE:
+		case ECONNRESET:
+			return -2;
+		default:
+			log_error_write(srv, __FILE__, __LINE__, "ssd",
+					"sendfile failed:", strerror(errno), fd);
+			return -1;
+		}
+	}
+	else if (r == 0) {
+
+		free(buff);
+		
+		int oerrno = errno;
+		/* We got an event to write but we wrote nothing
+		 *
+		 * - the file shrinked -> error
+		 * - the remote side closed inbetween -> remote-close */
+		
+		if (HANDLER_ERROR == stat_cache_get_entry(srv, con, c->file.name, &sce)) {
+			/* file is gone ? */
+			return -1;
+		}
+		
+		if (offset > sce->st.st_size) {
+			/* file shrinked, close the connection */
+			errno = oerrno;
+	
+			return -1;
+		}
+	
+		errno = oerrno;
+		return -2;
+	}
+	
+	r = write(fd, buff, toSend);
+
+	free(buff);
+	
+	if (r >= 0) {
+		chunkqueue_mark_written(cq, r);
+		*p_max_bytes -= r;
+	}
+#endif
+
+	return (r > 0 && r == toSend) ? 0 : -3;
+}
+

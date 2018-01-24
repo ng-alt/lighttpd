@@ -34,7 +34,14 @@
 # include <sys/filio.h>
 #endif
 
+#if EMBEDDED_EANBLE
+#include <dirent.h>
+#endif
+
 #include "sys-socket.h"
+
+#include <dlinklist.h>
+#define DBE 1
 
 typedef struct {
 	        PLUGIN_DATA;
@@ -411,7 +418,9 @@ static int connection_handle_read(server *srv, connection *con) {
 }
 
 static int connection_handle_write_prepare(server *srv, connection *con) {
-	if (con->mode == DIRECT) {
+	
+	if (con->mode == DIRECT || con->mode == SMB_NTLM || con->mode == SMB_BASIC) {
+
 		/* static files */
 		switch(con->request.http_method) {
 		case HTTP_METHOD_GET:
@@ -460,8 +469,8 @@ static int connection_handle_write_prepare(server *srv, connection *con) {
 
 		con->file_finished = 1;
 		break;
-	default: /* class: header + body */
-		if (con->mode != DIRECT) break;
+	default: /* class: header + body */		
+		if (con->mode != DIRECT && con->mode != SMB_NTLM && con->mode != SMB_BASIC) break;
 
 		/* only custom body for 4xx and 5xx */
 		if (con->http_status < 400 || con->http_status >= 600) break;
@@ -478,11 +487,24 @@ static int connection_handle_write_prepare(server *srv, connection *con) {
 			buffer_append_int(con->physical.path, con->http_status);
 			buffer_append_string_len(con->physical.path, CONST_STR_LEN(".html"));
 
-			if (HANDLER_ERROR != stat_cache_get_entry(srv, con, con->physical.path, &sce)) {
+			//- Sungmin add
+			con->mode = DIRECT;
+			
+			if (HANDLER_ERROR != stat_cache_get_entry(srv, con, smbc_wrapper_physical_url_path(srv, con), &sce)) {			
 				con->file_finished = 1;
 
 				http_chunk_append_file(srv, con, con->physical.path, 0, sce->st.st_size);
 				response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_BUF_LEN(sce->content_type));
+
+				//- 20130104 Sungmin add
+				if(con->http_status==401){
+					buffer *out = buffer_init();					
+					buffer_copy_string_len(out, CONST_STR_LEN("<input class='urlInfo' value='"));				
+					buffer_append_string_buffer(out, con->url.rel_path);				
+					buffer_append_string_len(out, CONST_STR_LEN("' type='hidden'>"));
+					chunkqueue_append_buffer(con->write_queue, out);
+					buffer_free(out);
+				}
 			}
 		}
 
@@ -608,7 +630,7 @@ static int connection_handle_write_prepare(server *srv, connection *con) {
 	return 0;
 }
 
-static int connection_handle_write(server *srv, connection *con) {
+static int connection_handle_write(server *srv, connection *con) {	
 	switch(network_write_chunkqueue(srv, con, con->write_queue, MAX_WRITE_LIMIT)) {
 	case 0:
 		con->write_request_ts = srv->cur_ts;
@@ -638,7 +660,498 @@ static int connection_handle_write(server *srv, connection *con) {
 	return 0;
 }
 
+static int parser_share_link(server *srv, connection *con){	
+	int result=0;
+	
+	if(strncmp(con->request.uri->ptr, "/ASUSHARE", 9)==0){
+		
+		char mac[20]="\0";		
+		char* decode_str=NULL;
+		int bExpired=0;
 
+	#if EMBEDDED_EANBLE
+		#ifdef APP_IPKG
+		char *router_mac=nvram_get_router_mac();
+      	sprintf(mac,"%s",router_mac);
+		free(router_mac);
+		#else
+		char *router_mac=nvram_get_router_mac();
+		strcpy(mac, (router_mac==NULL) ? "00:12:34:56:78:90" : router_mac);
+		#endif
+	#else
+		get_mac_address("eth0", &mac);					
+	#endif
+		
+		Cdbg(DBE, "mac=%s", mac);
+		
+		char* key = ldb_base64_encode(mac, strlen(mac));		
+		int y = strstr (con->request.uri->ptr+1, "/") - (con->request.uri->ptr);
+		
+		if(y<=9){
+			if(key){
+				free(key);
+				key=NULL;
+			}
+			return -1;
+		}
+		
+		buffer* filename = buffer_init();
+		buffer_copy_string_len(filename, con->request.uri->ptr+1+y, con->request.uri->used-2-y);
+		
+		buffer* substrencode = buffer_init();
+		buffer_copy_string_len(substrencode,con->request.uri->ptr+9,y-9);
+
+		decode_str = x123_decode(substrencode->ptr, key, &decode_str);		
+		Cdbg(DBE, "decode_str=%s", decode_str);
+
+		if(decode_str){
+			int x = strstr (decode_str,"?") - decode_str;
+
+			int param_len = strlen(decode_str) - x;
+			buffer* param = buffer_init();
+			buffer* user = buffer_init();
+			buffer* pass = buffer_init();
+			buffer* expire = buffer_init();
+			buffer_copy_string_len(param, decode_str + x + 1, param_len);
+			//Cdbg(DBE, "123param=[%s]", param->ptr);
+
+			char * pch;
+			pch = strtok(param->ptr, "&");
+			while(pch!=NULL){
+			
+				if(strncmp(pch, "auth=", 5)==0){
+
+					int len = strlen(pch)-5;				
+					char* temp = (char*)malloc(len+1);
+					memset(temp,'\0', len);				
+					strncpy(temp, pch+5, len);
+					temp[len]='\0';
+
+					buffer_copy_string( con->share_link_basic_auth, "Basic " );
+					buffer_append_string( con->share_link_basic_auth, temp );
+
+					if(temp){
+						free(temp);
+						temp=NULL;
+					}
+				}
+				else if(strncmp(pch, "expire=", 7)==0){
+					int len = strlen(pch)-7;				
+					char* temp2 = (char*)malloc(len+1);
+					memset(temp2,'\0', len);				
+					strncpy(temp2, pch+7, len);
+					temp2[len]='\0';
+					Cdbg(DBE, "expire(temp2) = %s", temp2);
+
+					unsigned long expire_time = atol(temp2);
+					time_t cur_time = time(NULL);
+					unsigned long cur_time2 = cur_time;
+					
+					//double offset = difftime((time_t)expire_time, cur_time);
+					unsigned long offset = expire_time - cur_time;
+					Cdbg(DBE, "expire_time=%lu, cur_time2=%lu, offset = %lu", expire_time, cur_time2, offset);
+					if( offset < 0.0 ){
+						buffer_reset(con->share_link_basic_auth);	
+						bExpired = 1;
+					}
+					
+					if(temp2){
+						free(temp2);
+						temp2=NULL;
+					}
+				}
+				
+				pch = strtok( NULL, "&" );
+			}
+
+			buffer_free(param);
+			buffer_free(user);
+			buffer_free(pass);
+			buffer_free(expire);
+			
+			buffer_copy_string( con->share_link_shortpath, "ASUSHARE");
+			buffer_append_string_buffer( con->share_link_shortpath, substrencode );
+			buffer_append_slash(con->share_link_shortpath);
+			
+			buffer_copy_string_len( con->share_link_realpath, decode_str, x );
+			buffer_append_slash(con->share_link_realpath);
+
+			buffer_urldecode_path(filename);
+			buffer_copy_buffer( con->share_link_filename, filename );
+
+			buffer_reset(con->request.uri);
+			buffer_copy_buffer(con->request.uri, con->share_link_realpath);
+			buffer_append_string_buffer(con->request.uri, filename);
+
+			con->share_link_type = 0;
+			
+			if(decode_str){
+				free(decode_str);
+				decode_str = NULL;
+			}
+		
+		}
+		
+		buffer_free(substrencode);		
+		buffer_free(filename);
+
+		if(key){
+			free(key);
+			key=NULL;
+		}
+
+		Cdbg(DBE, "con->share_link_basic_auth=%s", con->share_link_basic_auth->ptr);
+		Cdbg(DBE, "con->share_link_shortpath=%s", con->share_link_shortpath->ptr);
+		Cdbg(DBE, "con->share_link_realpath=%s", con->share_link_realpath->ptr);
+		Cdbg(DBE, "con->share_link_filename=%s", con->share_link_filename->ptr);
+		Cdbg(DBE, "con->request.uri=%s", con->request.uri->ptr);
+
+		if(bExpired==0)
+			result = 1;
+		else if(bExpired==1)
+			result = -1;
+		
+	}
+	else if(strncmp(con->request.uri->ptr, "/AICLOUD", 8)==0){
+		int is_illegal = 0;
+		int y = strstr (con->request.uri->ptr+1,"/") - (con->request.uri->ptr);
+		
+		//- Not valid share link
+		if( y <= 8 )
+			return -1;
+
+		Cdbg(DBE, "AICLOUD sharelink, con->request.uri=%s", con->request.uri->ptr);
+		
+		buffer* filename = buffer_init();
+		buffer_copy_string_len(filename, con->request.uri->ptr+y+1, con->request.uri->used-y);
+		buffer_urldecode_path(filename);
+		Cdbg(DBE, "filename=%s", filename->ptr);
+				
+		buffer* sharepath = buffer_init();
+		buffer_copy_string_len(sharepath, con->request.uri->ptr+1, y-1);
+		Cdbg(DBE, "sharepath=%s", sharepath->ptr );
+		
+		share_link_info_t* c=NULL;
+
+		for (c = share_link_info_list; c; c = c->next) {
+			if(buffer_is_equal(c->shortpath, sharepath)){				
+
+				buffer_reset(con->share_link_basic_auth);	
+				
+				time_t cur_time = time(NULL);
+				double offset = difftime(c->expiretime, cur_time);	
+
+				if( c->expiretime!=0 && offset < 0.0 ){
+					is_illegal = 1;
+					free_share_link_info(c);
+					DLIST_REMOVE(share_link_info_list, c);
+					break;
+				}
+
+				buffer* filename2 = buffer_init();
+				buffer_copy_buffer(filename2,c->filename);
+				
+				int com_result = strncmp( filename->ptr, filename2->ptr, filename2->used-1) ;
+
+				buffer_free(filename2);
+
+				if( com_result!= 0 ){					
+					is_illegal = 1;					
+					break;
+				}
+
+				buffer_copy_string( con->share_link_basic_auth, "Basic " );
+				buffer_append_string_buffer( con->share_link_basic_auth, c->auth );
+
+				buffer_copy_buffer( con->share_link_shortpath, c->shortpath );
+				buffer_append_slash(con->share_link_shortpath);
+				
+				buffer_copy_buffer( con->share_link_realpath, c->realpath );
+				buffer_append_slash(con->share_link_realpath);
+				
+				buffer_copy_buffer( con->share_link_filename, c->filename );
+				
+				//- share_link_type: 0: none, 1: sharelink for general use, 2: sharelink for router sync
+				con->share_link_type = c->toshare;
+				
+				Cdbg(DBE, "realpath=%s, con->request.uri=%s, toShare=%d", c->realpath->ptr, con->request.uri->ptr, c->toshare);
+				
+				break;
+			}
+		}
+
+		if(c==NULL||is_illegal==1){
+			buffer_free(sharepath);
+			buffer_free(filename);
+			return -1;
+		}
+		
+		buffer_reset(con->request.uri);		
+
+#if 0
+		buffer_copy_buffer(con->request.uri, c->realpath);
+		buffer_append_string(con->request.uri, "/");
+		buffer_append_string_buffer(con->request.uri, filename);
+		//buffer_append_string_buffer(con->request.uri, c->filename);
+#else
+		buffer_copy_string(con->request.uri, "");
+		buffer_append_string_encoded(con->request.uri, CONST_BUF_LEN(c->realpath), ENCODING_REL_URI);		
+		buffer_append_slash(con->request.uri);
+		buffer_append_string_encoded(con->request.uri, CONST_BUF_LEN(filename), ENCODING_REL_URI);
+#endif
+
+		buffer_free(sharepath);
+		buffer_free(filename);
+
+		Cdbg(DBE, "con->share_link_basic_auth=%s", con->share_link_basic_auth->ptr);
+		Cdbg(DBE, "con->share_link_shortpath=%s", con->share_link_shortpath->ptr);
+		Cdbg(DBE, "con->share_link_realpath=%s", con->share_link_realpath->ptr);
+		Cdbg(DBE, "con->share_link_filename=%s", con->share_link_filename->ptr);
+		Cdbg(DBE, "con->request.uri=%s", con->request.uri->ptr);
+
+		if(con->share_link_type==1)
+			log_sys_write(srv, "sbss", "Download file", c->filename, "from ip", con->dst_addr_buf->ptr);
+		  
+		return 1;
+	}
+
+	return result;
+}
+
+static int redirect_mobile_share_link(server *srv, connection *con){
+	data_string *ds_userAgent = (data_string *)array_get_element(con->request.headers, "user-Agent");
+	char* aa = get_filename_ext(con->request.uri->ptr);
+	int len = strlen(aa)+1; 		
+	char* file_ext = (char*)malloc(len);
+	memset(file_ext,'\0', len);
+	strcpy(file_ext, aa);
+	for (int i = 0; file_ext[i]; i++)
+		file_ext[i] = tolower(file_ext[i]);
+
+	if( con->share_link_basic_auth->used &&
+		ds_userAgent && 
+		con->srv_socket->is_ssl &&
+		( //strstr( ds_userAgent->value->ptr, "Chrome" ) ||
+		  strstr( ds_userAgent->value->ptr, "Android"  ) ) ){
+
+		buffer *out = buffer_init();
+		response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_STR_LEN("text/html; charset=UTF-8"));
+		
+	#if EMBEDDED_EANBLE
+		char* webdav_http_port = nvram_get_webdav_http_port();
+	#else
+		char* webdav_http_port = "8082";
+	#endif
+
+		//- https -> http url
+		buffer* redirect_url = buffer_init();
+		buffer_copy_string_len(redirect_url, CONST_STR_LEN("http://"));
+		
+		char* b = strstr(con->request.http_host->ptr, ":");
+		if(b!=NULL)
+			buffer_append_string_len(redirect_url, con->request.http_host->ptr, b-con->request.http_host->ptr);
+		else
+			buffer_append_string_buffer(redirect_url, con->request.http_host);
+		
+		buffer_append_string_len(redirect_url, CONST_STR_LEN(":"));
+		buffer_append_string(redirect_url, webdav_http_port);
+		buffer_append_string_len(redirect_url, CONST_STR_LEN("/"));
+		buffer_append_string_buffer(redirect_url, con->share_link_shortpath);
+		buffer_append_string_encoded(redirect_url, con->share_link_filename->ptr, strlen(con->share_link_filename->ptr), ENCODING_REL_URI);		
+
+		Cdbg(1, "redirect_url = %s", redirect_url->ptr);
+				
+		buffer_append_string_len(out, CONST_STR_LEN("<html>"));
+		buffer_append_string_len(out, CONST_STR_LEN("<head>"));
+		buffer_append_string_len(out, CONST_STR_LEN("<meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\">"));
+		buffer_append_string_len(out, CONST_STR_LEN("<meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\">"));
+		buffer_append_string_len(out, CONST_STR_LEN("<meta http-equiv=\"refresh\" content=\"0;url="));
+		buffer_append_string_buffer(out, redirect_url);
+		buffer_append_string_len(out, CONST_STR_LEN("\">"));
+		buffer_append_string_len(out, CONST_STR_LEN("</head>"));
+		buffer_append_string_len(out, CONST_STR_LEN("</html>"));
+
+		buffer_free(redirect_url);
+
+		chunkqueue_append_buffer(con->write_queue, out);
+		buffer_free(out);
+		
+		con->file_finished = 1;
+		con->http_status = 200; 
+
+		return 1;
+	}
+	else if( con->share_link_basic_auth->used &&
+		ds_userAgent && 
+		con->srv_socket->is_ssl &&
+		( strncmp(file_ext, "mp3", 3) == 0 ||
+		  strncmp(file_ext, "mp4", 3) == 0 ||
+		  strncmp(file_ext, "m4v", 3) == 0 ) &&
+		( //strstr( ds_userAgent->value->ptr, "Chrome" ) ||
+		  //strstr( ds_userAgent->value->ptr, "Android" ) || 
+		  strstr( ds_userAgent->value->ptr, "iPhone" ) || 
+		  strstr( ds_userAgent->value->ptr, "iPad"	 ) || 
+		  strstr( ds_userAgent->value->ptr, "iPod"	 ) ) ){
+					
+		buffer *out = buffer_init();
+		response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_STR_LEN("text/html; charset=UTF-8"));
+		
+	#if EMBEDDED_EANBLE
+		char* webdav_http_port = nvram_get_webdav_http_port();
+	#else
+		char* webdav_http_port = "8082";
+	#endif
+	
+		buffer_append_string_len(out, CONST_STR_LEN("<div id=\"http_port\" content=\""));				
+		buffer_append_string(out, webdav_http_port);
+		buffer_append_string_len(out, CONST_STR_LEN("\"></div>\n"));
+
+		chunkqueue_append_buffer(con->write_queue, out);
+		buffer_free(out);
+		
+#ifdef APP_IPKG
+#if EMBEDDED_EANBLE
+        free(webdav_http_port);
+#endif
+#endif
+		stat_cache_entry *sce = NULL;
+					
+		buffer* html_file = buffer_init();
+
+#if EMBEDDED_EANBLE		
+#ifndef APP_IPKG
+		if( strncmp(file_ext, "mp3", 3) == 0 )
+			buffer_copy_string(html_file, "/usr/lighttpd/css/iaudio.html");
+		else if( strncmp(file_ext, "mp4", 3) == 0 ||
+				 strncmp(file_ext, "m4v", 3) == 0 )
+			buffer_copy_string(html_file, "/usr/lighttpd/css/ivideo.html");
+#else
+		if( strncmp(file_ext, "mp3", 3) == 0 )
+			buffer_copy_string(html_file, "/opt/etc/aicloud_UI/css/iaudio.html");
+		else if( strncmp(file_ext, "mp4", 3) == 0 ||
+				 strncmp(file_ext, "m4v", 3) == 0 )
+			buffer_copy_string(html_file, "/opt/etc/aicloud_UI/css/ivideo.html");
+#endif
+#else
+		if( strncmp(file_ext, "mp3", 3) == 0 )
+			buffer_copy_string(html_file, "/usr/css/iaudio.html");
+		else if( strncmp(file_ext, "mp4", 3) == 0 ||
+				 strncmp(file_ext, "m4v", 3) == 0 )
+			buffer_copy_string(html_file, "/usr/css/ivideo.html");
+#endif
+
+		con->mode = DIRECT;
+
+		if (HANDLER_ERROR != stat_cache_get_entry(srv, con, html_file, &sce)) {
+			http_chunk_append_file(srv, con, html_file, 0, sce->st.st_size);
+			response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_BUF_LEN(sce->content_type));
+			con->file_finished = 1;
+			con->http_status = 200; 				
+		}
+		else{
+			con->file_finished = 1;
+			con->http_status = 404;
+		}
+		
+		Cdbg(DBE, "ds_userAgent->value=%s, file_ext=%s, html_file=%s", ds_userAgent->value->ptr, file_ext, html_file->ptr);
+	
+		free(file_ext);
+		buffer_free(html_file);
+					
+		return 1;
+	}
+	
+	free(file_ext);
+
+	return 0;
+}
+
+static void check_available_temp_space(server *srv, connection *con){
+	
+#if EMBEDDED_EANBLE
+
+	//- 20130219 JerryLin add
+	char* disk_path = "/mnt/";
+	DIR *dir;			
+	if (NULL != (dir = opendir(disk_path))) {
+		struct dirent *de;
+							
+		while(NULL != (de = readdir(dir))) {
+				
+			if ( de->d_name[0] == '.' && de->d_name[1] == '.' && de->d_name[2] == '\0' ) {
+				continue;
+				//- ignore the parent dir
+			}
+			
+			if ( de->d_name[0] == '.' ) {
+				continue;
+				//- ignore the hidden file
+			}		
+			
+			int bFound = 0;
+			char querycmd[100] = "\0";		
+			char disk_full_path[100] = "\0";
+			
+			sprintf(disk_full_path, "%s%s", disk_path, de->d_name);
+			sprintf(querycmd, "df|grep -i '%s'", disk_full_path);
+			
+			char mybuffer[BUFSIZ]="\0";
+			FILE* fp = popen( querycmd, "r");
+			if(fp){
+				int len = fread(mybuffer, sizeof(char), BUFSIZ, fp);
+				if(len>0){
+					mybuffer[len-1]="\0";
+				
+					char * pch;
+					pch = strtok(mybuffer, " ");
+					int count=1;
+					while(pch!=NULL){				
+						if(count==4){
+							//- Available space
+							int available_space = atoi(pch);
+
+							//- more than 100MB
+							if( available_space > 102400 ){								
+								//- Add usbdisk temp folder
+								data_string *ds = data_string_init();
+								buffer_copy_string_len(ds->key, CONST_STR_LEN("server.usbdisk.upload-dirs"));
+								buffer_copy_string_len(ds->value, disk_path, strlen(disk_path));
+								buffer_append_string_len(ds->value, de->d_name, strlen(de->d_name));
+								array_replace(srv->srvconf.upload_tempdirs, (data_unset *)ds);
+								bFound = 1;
+								break;
+							}
+						}
+									
+						//- Next
+						pch = strtok(NULL," ");
+						count++;
+					}
+
+				}
+
+				pclose(fp);
+			}
+
+			if(bFound==1)
+				break;
+		}
+
+		closedir(dir);
+	}
+#else
+	/*
+	data_string *ds = data_string_init();
+	buffer_copy_string_len(ds->key, CONST_STR_LEN("server.usbdisk.upload-dirs"));
+	buffer_copy_string_len(ds->value, CONST_STR_LEN("/mnt/sda"));
+									
+	array_replace(srv->srvconf.upload_tempdirs, (data_unset *)ds);
+	
+	Cdbg(1,"used=%d, ds->value=%s", srv->srvconf.upload_tempdirs->used, ds->value->ptr);
+	//chunkqueue_set_tempdirs(con->request_content_queue, srv->srvconf.upload_tempdirs);
+	*/
+#endif
+}
 
 connection *connection_init(server *srv) {
 	connection *con;
@@ -654,6 +1167,7 @@ connection *connection_init(server *srv) {
 	con->bytes_read = 0;
 	con->bytes_header = 0;
 	con->loops_per_request = 0;
+	con->share_link_type = 0;
 
 #define CLEAN(x) \
 	con->x = buffer_init();
@@ -678,6 +1192,24 @@ connection *connection_init(server *srv) {
 	CLEAN(physical.etag);
 	CLEAN(parse_request);
 
+	//- Sungmin add 20101012
+	CLEAN(url.doc_root);
+	CLEAN(url.path);
+	CLEAN(url.basedir);
+	CLEAN(url.rel_path);
+	CLEAN(url.etag);
+	CLEAN(share_link_basic_auth);
+	CLEAN(share_link_shortpath);
+	CLEAN(share_link_realpath);
+	CLEAN(share_link_filename);	
+	CLEAN(physical_auth_url);
+	CLEAN(url_options);
+	CLEAN(aidisk_username);
+	CLEAN(aidisk_passwd);
+	CLEAN(match_smb_ip);
+	CLEAN(replace_smb_name);
+	CLEAN(asus_token);
+	
 	CLEAN(server_name);
 	CLEAN(error_handler);
 	CLEAN(dst_addr_buf);
@@ -747,6 +1279,24 @@ void connections_free(server *srv) {
 		CLEAN(physical.rel_path);
 		CLEAN(parse_request);
 
+		//- Sungmin add 20101012
+		CLEAN(url.doc_root);
+		CLEAN(url.path);
+		CLEAN(url.basedir);
+		CLEAN(url.rel_path);
+		CLEAN(url.etag);
+		CLEAN(share_link_basic_auth);
+		CLEAN(share_link_shortpath);
+		CLEAN(share_link_realpath);
+		CLEAN(share_link_filename);
+		CLEAN(physical_auth_url);
+		CLEAN(url_options);
+		CLEAN(aidisk_username);
+		CLEAN(aidisk_passwd);
+		CLEAN(match_smb_ip);
+		CLEAN(replace_smb_name);
+		CLEAN(asus_token);
+		
 		CLEAN(server_name);
 		CLEAN(error_handler);
 		CLEAN(dst_addr_buf);
@@ -817,9 +1367,26 @@ int connection_reset(server *srv, connection *con) {
 	CLEAN(physical.basedir);
 	CLEAN(physical.rel_path);
 	CLEAN(physical.etag);
-
 	CLEAN(parse_request);
 
+	//- Sungmin add 20101012
+	CLEAN(url.doc_root);
+	CLEAN(url.path);
+	CLEAN(url.basedir);
+	CLEAN(url.rel_path);
+	CLEAN(url.etag);
+	CLEAN(share_link_basic_auth);
+	CLEAN(share_link_shortpath);
+	CLEAN(share_link_realpath);
+	CLEAN(share_link_filename);
+	CLEAN(physical_auth_url);
+	CLEAN(url_options);
+	CLEAN(aidisk_username);
+	CLEAN(aidisk_passwd);
+	CLEAN(match_smb_ip);
+	CLEAN(replace_smb_name);
+	CLEAN(asus_token);
+	
 	CLEAN(server_name);
 	CLEAN(error_handler);
 #if defined USE_OPENSSL && ! defined OPENSSL_NO_TLSEXT
@@ -1009,6 +1576,26 @@ found_header_end:
 	 * the only way is to leave here */
 	if (is_closed && ostate == con->state) {
 		connection_set_state(srv, con, CON_STATE_ERROR);
+if( con->mode == SMB_BASIC || con->mode == SMB_NTLM ) {
+			if(con->cur_fd == -1)
+				con->cur_fd = smbc_wrapper_open(con,con->url.path->ptr ,O_WRONLY| O_APPEND, 0);
+			else {
+			   // Get size 
+				struct stat st; 
+				off_t partial_file_sz=0;
+				int err;
+				
+				err = smbc_wrapper_stat(con, con->url.path->ptr, &st);
+				if(err != -1){
+					partial_file_sz = st.st_size;
+				}
+				err = smbc_wrapper_close(con, con->cur_fd);
+				con->cur_fd =-1;
+				if((off_t)con->request.content_length > partial_file_sz){
+					err = smbc_wrapper_unlink(con,con->url.path->ptr);
+				}
+			} 
+		}
 	}
 
 	chunkqueue_remove_finished_chunks(cq);
@@ -1149,7 +1736,7 @@ connection *connection_accept(server *srv, server_socket *srv_socket) {
 		return NULL;
 	} else {
 		connection *con;
-
+		
 		srv->cur_fds++;
 
 		/* ok, we have the connection, register it */
@@ -1174,7 +1761,7 @@ connection *connection_accept(server *srv, server_socket *srv_socket) {
 		con->dst_addr = cnt_addr;
 		buffer_copy_string(con->dst_addr_buf, inet_ntop_cache_get_ip(srv, &(con->dst_addr)));
 		con->srv_socket = srv_socket;
-
+		
 		if (-1 == (fdevent_fcntl_set(srv->ev, con->fd))) {
 			log_error_write(srv, __FILE__, __LINE__, "ss", "fcntl failed: ", strerror(errno));
 			return NULL;
@@ -1200,6 +1787,12 @@ connection *connection_accept(server *srv, server_socket *srv_socket) {
 			}
 		}
 #endif
+
+		if(!srv_socket->is_ssl){			
+			srv->last_no_ssl_connection_ts = srv->cur_ts;
+			//Cdbg(1, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa srv->last_no_ssl_connection_ts=%d", srv->last_no_ssl_connection_ts);
+		}
+		
 		return con;
 	}
 }
@@ -1248,14 +1841,67 @@ int connection_state_machine(server *srv, connection *con) {
 			buffer_reset(con->uri.query);
 			buffer_reset(con->request.orig_uri);
 
-			if (http_request_parse(srv, con)) {
-				/* we have to read some data from the POST request */
+			int res = http_request_parse(srv, con);
 
-				connection_set_state(srv, con, CON_STATE_READ_POST);
-
+#ifdef HAVE_LIBSMBCLIENT
+			////////////////////////////////////////////////////////////////////////////////////////
+			//- If url is encrypted share link, then use basic auth
+			int result = parser_share_link(srv, con);
+			if(result==-1){
+				connection_set_state(srv, con, CON_STATE_ERROR);
+				break;
+			}
+			////////////////////////////////////////////////////////////////////////////////////////
+			
+			if( redirect_mobile_share_link(srv, con) == 1 ){
+				connection_set_state(srv, con, CON_STATE_HANDLE_REQUEST);				
 				break;
 			}
 
+			//- sungmin add
+			char buf[1024]; // cookie content
+		    char key[32] = "asus_token";   // <AuthName> key
+		    char *cs;       // pointer to (some part of) <AuthName> key    
+			data_string *ds_cookie = (data_string *)array_get_element(con->request.headers, "Cookie");
+			
+			if(ds_cookie!=NULL){				
+				buffer* tmp = buffer_init();
+				buffer_copy_string_len(tmp, ds_cookie->value->ptr, ds_cookie->value->used);		
+				buffer_urldecode_path(tmp);
+				memset(buf, 0, sizeof(buf));
+				strncpy(buf, tmp->ptr, tmp->used);
+				buffer_free(tmp);
+				
+				// check for "<AuthName>=" entry in a cookie
+			    for (cs = buf; (cs = strstr(cs, key)) != NULL; ) {
+			        
+			        // check if found entry matches exactly for "KEY=" part.
+			        cs += strlen(key);  // jump to the end of "KEY" part
+			        while (isspace(*cs)) cs++; // whitespace can be skipped
+					
+			        // break forward if this was an exact match
+			        if (*cs++ == '=') {
+			            char *eot = strchr(cs, ';');
+			            if (eot) *eot = '\0';				
+			            break;
+			        }
+			    }
+
+				if(cs!=NULL){			
+					buffer_copy_string_len(con->asus_token, cs, strlen(cs));				
+				}
+			}		
+			////////////////////////////////////////////////////////////////////////////////////////
+#endif
+
+			if (res) {
+				check_available_temp_space(srv, con);
+				
+				/* we have to read some data from the POST request */
+				connection_set_state(srv, con, CON_STATE_READ_POST);
+				break;
+			}
+			
 			connection_set_state(srv, con, CON_STATE_HANDLE_REQUEST);
 
 			break;
@@ -1276,7 +1922,7 @@ int connection_state_machine(server *srv, connection *con) {
 
 			switch (r = http_response_prepare(srv, con)) {
 			case HANDLER_FINISHED:
-				if (con->mode == DIRECT) {
+				if (con->mode == DIRECT || con->mode == SMB_BASIC || con->mode == SMB_NTLM) {
 					if (con->http_status == 404 ||
 					    con->http_status == 403) {
 						/* 404 error-handler */
@@ -1561,6 +2207,8 @@ int connection_state_machine(server *srv, connection *con) {
 
 			switch(con->mode) {
 			case DIRECT:
+case SMB_BASIC:
+			case SMB_NTLM:
 #if 0
 				log_error_write(srv, __FILE__, __LINE__, "sd",
 						"emergency exit: direct",

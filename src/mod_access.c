@@ -22,7 +22,7 @@ typedef struct {
 
 INIT_FUNC(mod_access_init) {
 	plugin_data *p;
-
+	
 	p = calloc(1, sizeof(*p));
 
 	return p;
@@ -57,7 +57,7 @@ FREE_FUNC(mod_access_free) {
 SETDEFAULTS_FUNC(mod_access_set_defaults) {
 	plugin_data *p = p_d;
 	size_t i = 0;
-
+	
 	config_values_t cv[] = {
 		{ "url.access-deny",             NULL, T_CONFIG_ARRAY, T_CONFIG_SCOPE_CONNECTION },
 		{ NULL,                          NULL, T_CONFIG_UNSET, T_CONFIG_SCOPE_UNSET }
@@ -177,7 +177,7 @@ URIHANDLER_FUNC(mod_access_uri_handler) {
 	return HANDLER_GO_ON;
 }
 
-
+#ifndef APP_IPKG
 int mod_access_plugin_init(plugin *p);
 int mod_access_plugin_init(plugin *p) {
 	p->version     = LIGHTTPD_VERSION_ID;
@@ -193,3 +193,20 @@ int mod_access_plugin_init(plugin *p) {
 
 	return 0;
 }
+#else
+int aicloud_mod_access_plugin_init(plugin *p);
+int aicloud_mod_access_plugin_init(plugin *p) {
+    p->version     = LIGHTTPD_VERSION_ID;
+    p->name        = buffer_init_string("access");
+
+    p->init        = mod_access_init;
+    p->set_defaults = mod_access_set_defaults;
+    p->handle_uri_clean = mod_access_uri_handler;
+    p->handle_subrequest_start  = mod_access_uri_handler;
+    p->cleanup     = mod_access_free;
+
+    p->data        = NULL;
+
+    return 0;
+}
+#endif

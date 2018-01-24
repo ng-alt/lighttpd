@@ -21,6 +21,8 @@
 #include <stdlib.h>
 #include <assert.h>
 
+#define DBE 0
+
 #ifdef USE_OPENSSL
 # include <openssl/ssl.h>
 # include <openssl/err.h>
@@ -166,7 +168,7 @@ static int network_server_init(server *srv, buffer *host_token, specific_config 
 	buffer *b;
 	int is_unix_domain_socket = 0;
 	int fd;
-
+	
 #ifdef __WIN32
 	WORD wVersionRequested;
 	WSADATA wsaData;
@@ -691,7 +693,7 @@ int network_init(server *srv) {
 		{ NETWORK_BACKEND_WRITE,      "write" },
 		{ NETWORK_BACKEND_UNSET,       NULL }
 	};
-
+	
 #ifdef USE_OPENSSL
 	/* load SSL certificates */
 	for (i = 0; i < srv->config_context->used; i++) {
@@ -702,6 +704,12 @@ int network_init(server *srv) {
 		long ssloptions =
 			SSL_OP_ALL | SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION | SSL_OP_NO_COMPRESSION;
 
+		//- 20160204 Sungmin add
+		ssloptions &= ~SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION;
+		//ssloptions |= SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION;
+		
+		Cdbg(DBE, "ssloptions = %d", ssloptions);
+		
 		if (buffer_string_is_empty(s->ssl_pemfile) && buffer_string_is_empty(s->ssl_ca_file)) continue;
 
 		if (srv->ssl_is_init == 0) {
@@ -924,7 +932,7 @@ int network_init(server *srv) {
 # endif
 	}
 #endif
-
+	
 	b = buffer_init();
 
 	buffer_copy_buffer(b, srv->srvconf.bindhost);
@@ -974,7 +982,7 @@ int network_init(server *srv) {
 		break;
 #endif
 #if defined(USE_SENDFILE)
-	case NETWORK_BACKEND_SENDFILE:
+	case NETWORK_BACKEND_SENDFILE:		
 		srv->network_backend_write = network_write_chunkqueue_sendfile;
 		break;
 #endif
@@ -1032,7 +1040,7 @@ int network_write_chunkqueue(server *srv, connection *con, chunkqueue *cq, off_t
 	int corked = 0;
 #endif
 	server_socket *srv_socket = con->srv_socket;
-
+	
 	if (con->conf.global_kbytes_per_second) {
 		off_t limit = con->conf.global_kbytes_per_second * 1024 - *(con->conf.global_bytes_per_second_cnt_ptr);
 		if (limit <= 0) {
@@ -1074,7 +1082,7 @@ int network_write_chunkqueue(server *srv, connection *con, chunkqueue *cq, off_t
 #endif
 
 	if (srv_socket->is_ssl) {
-#ifdef USE_OPENSSL
+#ifdef USE_OPENSSL		
 		ret = srv->network_ssl_backend_write(srv, con, con->ssl, cq, max_bytes);
 #endif
 	} else {

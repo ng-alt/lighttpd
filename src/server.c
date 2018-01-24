@@ -126,6 +126,9 @@ static void sigaction_handler(int sig, siginfo_t *si, void *context) {
 		break;
 	case SIGCHLD:
 		break;
+	case SIGUSR2:
+		process_share_link_for_router_sync_use();
+		break;
 	}
 }
 #elif defined(HAVE_SIGNAL) || defined(HAVE_SIGACTION)
@@ -195,6 +198,18 @@ static server *server_init(void) {
 	CLEAN(srvconf.event_handler);
 	CLEAN(srvconf.pid_file);
 
+	//- Sungmin add 20111018
+	CLEAN(srvconf.arpping_interface);
+	CLEAN(srvconf.syslog_file);
+	CLEAN(srvconf.product_image);
+	CLEAN(srvconf.aicloud_version);
+	CLEAN(srvconf.app_installation_url);
+	CLEAN(syslog_buf);
+	CLEAN(cur_login_info);
+	CLEAN(last_login_info);
+	srv->last_no_ssl_connection_ts = 0;
+	srv->is_streaming_port_opend = 1;
+	
 	CLEAN(tmp_chunk_len);
 #undef CLEAN
 
@@ -284,6 +299,16 @@ static void server_free(server *srv) {
 	CLEAN(srvconf.modules_dir);
 	CLEAN(srvconf.network_backend);
 
+	//- Sungmin add 20111018
+	CLEAN(srvconf.arpping_interface);
+	CLEAN(srvconf.syslog_file);
+	CLEAN(srvconf.product_image);
+	CLEAN(srvconf.aicloud_version);
+	CLEAN(srvconf.app_installation_url);
+	CLEAN(syslog_buf);
+	CLEAN(cur_login_info);
+	CLEAN(last_login_info);
+	
 	CLEAN(tmp_chunk_len);
 #undef CLEAN
 
@@ -544,6 +569,7 @@ static void show_help (void) {
 }
 
 int main (int argc, char **argv) {
+	
 	server *srv = NULL;
 	int print_config = 0;
 	int test_config = 0;
@@ -567,8 +593,7 @@ int main (int argc, char **argv) {
 	interval.it_value.tv_sec = 1;
 	interval.it_value.tv_usec = 0;
 #endif
-
-
+	
 	/* for nice %b handling in strfime() */
 	setlocale(LC_TIME, "C");
 
@@ -587,6 +612,15 @@ int main (int argc, char **argv) {
 #endif
 	srv->srvconf.dont_daemonize = 0;
 
+#ifdef APP_IPKG
+    if(!access("/etc/server.pem",F_OK)){
+
+    }
+    else{
+    	start_ssl();
+    }
+#endif
+
 	while(-1 != (o = getopt(argc, argv, "f:m:hvVDpt"))) {
 		switch(o) {
 		case 'f':
@@ -600,7 +634,7 @@ int main (int argc, char **argv) {
 			if (config_read(srv, optarg)) {
 				server_free(srv);
 				return -1;
-			}
+			}			
 			break;
 		case 'm':
 			buffer_copy_string(srv->srvconf.modules_dir, optarg);
@@ -617,7 +651,7 @@ int main (int argc, char **argv) {
 			return -1;
 		}
 	}
-
+	
 	if (!srv->config_storage) {
 		log_error_write(srv, __FILE__, __LINE__, "s",
 				"No configuration available. Try using -f option.");
@@ -938,7 +972,7 @@ int main (int argc, char **argv) {
 		/* or use the default: we really don't want to hit max-fds */
 		srv->max_conns = srv->max_fds/3;
 	}
-
+	
 	if (HANDLER_GO_ON != plugins_call_init(srv)) {
 		log_error_write(srv, __FILE__, __LINE__, "s", "Initialization of plugins failed. Going down.");
 
@@ -986,6 +1020,20 @@ int main (int argc, char **argv) {
 	signal(SIGINT,  signal_handler);
 #endif
 
+#if EMBEDDED_EANBLE
+	sigset_t sigs_to_catch;	
+
+	/* set the signal handler */ 
+	sigemptyset(&sigs_to_catch); 
+	sigaddset(&sigs_to_catch, SIGTERM);
+	sigaddset(&sigs_to_catch, SIGUSR2);   
+	sigprocmask(SIG_UNBLOCK, &sigs_to_catch, NULL);
+	signal(SIGTERM, sigaction_handler);
+
+	//- 20121108 Sungmin add
+	signal(SIGUSR2, sigaction_handler);
+#endif
+
 #ifdef USE_ALARM
 	signal(SIGALRM, signal_handler);
 
@@ -1025,17 +1073,51 @@ int main (int argc, char **argv) {
 		server_free(srv);
 		return -1;
 	}
+	
+	//- Sungmin add	
+	if (-1 == log_sys_open(srv)) {
+		log_error_write(srv, __FILE__, __LINE__, "s", "Opening syslog failed. Going down.");
 
+		plugins_free(srv);
+		network_close(srv);
+		server_free(srv);
+		return -1;
+	}
+
+	#if EMBEDDED_EANBLE
+	#ifndef APP_IPKG
+	buffer_copy_string( srv->last_login_info, nvram_get_webdav_last_login_info() );
+	buffer_copy_string( srv->cur_login_info, nvram_get_webdav_last_login_info() );
+	#else
+	char *last_login_info = nvram_get_webdav_last_login_info();
+	fprintf(stderr,"last_login_info=%s\n",last_login_info);
+	if(last_login_info == NULL || *last_login_info == '(')
+	{
+		fprintf(stderr,"111\n");
+	}
+	else
+	{
+		buffer_copy_string( srv->last_login_info, last_login_info);
+		buffer_copy_string( srv->cur_login_info, last_login_info);
+		free(last_login_info);
+	}
+	#endif
+	#else
+	buffer_copy_string( srv->last_login_info, "admin>2012/08/08 18:28:28>100.100.100.100" );
+	buffer_copy_string( srv->cur_login_info, "admin>2012/08/08 18:28:28>100.100.100.100" );
+	#endif
+	//////////////////////////////////////////////////////////////////////////////////////////
+	
 	if (HANDLER_GO_ON != plugins_call_set_defaults(srv)) {
 		log_error_write(srv, __FILE__, __LINE__, "s", "Configuration of plugins failed. Going down.");
-
+		
 		plugins_free(srv);
 		network_close(srv);
 		server_free(srv);
 
 		return -1;
 	}
-
+	
 	/* dump unused config-keys */
 	for (i = 0; i < srv->config_context->used; i++) {
 		array *config = ((data_config *)srv->config_context->data[i])->value;

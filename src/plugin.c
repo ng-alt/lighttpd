@@ -137,7 +137,7 @@ int plugins_load(server *srv) {
 	for (i = 0; i < srv->srvconf.modules->used; i++) {
 		data_string *d = (data_string *)srv->srvconf.modules->data[i];
 		char *module = d->value->ptr;
-
+		
 		for (j = 0; j < i; j++) {
 			if (buffer_is_equal(d->value, ((data_string *) srv->srvconf.modules->data[j])->value)) {
 				log_error_write(srv, __FILE__, __LINE__, "sbs",
@@ -177,9 +177,9 @@ int plugins_load(server *srv) {
 	for (i = 0; i < srv->srvconf.modules->used; i++) {
 		data_string *d = (data_string *)srv->srvconf.modules->data[i];
 		char *module = d->value->ptr;
-
+		
 		for (j = 0; j < i; j++) {
-			if (buffer_is_equal(d->value, ((data_string *) srv->srvconf.modules->data[j])->value)) {
+			if (buffer_is_equal(d->value, ((data_string *) srv->srvconf.modules->data[j])->value)) {				
 				log_error_write(srv, __FILE__, __LINE__, "sbs",
 					"Cannot load plugin", d->value,
 					"more than once, please fix your config (lighttpd may not accept such configs in future releases)");
@@ -196,7 +196,7 @@ int plugins_load(server *srv) {
 #else
 		buffer_append_string_len(srv->tmp_buf, CONST_STR_LEN(".so"));
 #endif
-
+		
 		p = plugin_init();
 #ifdef __WIN32
 		if (NULL == (p->lib = LoadLibrary(srv->tmp_buf->ptr))) {
@@ -222,7 +222,7 @@ int plugins_load(server *srv) {
 		if (NULL == (p->lib = dlopen(srv->tmp_buf->ptr, RTLD_NOW|RTLD_GLOBAL))) {
 			log_error_write(srv, __FILE__, __LINE__, "sbs", "dlopen() failed for:",
 				srv->tmp_buf, dlerror());
-
+			
 			plugin_free(p);
 
 			return -1;
@@ -232,7 +232,7 @@ int plugins_load(server *srv) {
 		buffer_reset(srv->tmp_buf);
 		buffer_copy_string(srv->tmp_buf, module);
 		buffer_append_string_len(srv->tmp_buf, CONST_STR_LEN("_plugin_init"));
-
+		
 #ifdef __WIN32
 		init = GetProcAddress(p->lib, srv->tmp_buf->ptr);
 
@@ -278,7 +278,7 @@ int plugins_load(server *srv) {
 #endif
 		plugins_register(srv, p);
 	}
-
+	
 	return 0;
 }
 #endif /* defined(LIGHTTPD_STATIC) */

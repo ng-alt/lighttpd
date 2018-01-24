@@ -17,14 +17,17 @@
 #include <errno.h>
 #include <string.h>
 
+#define DBE 0
+
 int network_open_file_chunk(server *srv, connection *con, chunkqueue *cq) {
 	chunk* const c = cq->first;
 	off_t file_size, offset, toSend;
 
 	force_assert(NULL != c);
-	force_assert(FILE_CHUNK == c->type);
+	force_assert(FILE_CHUNK == c->type || SMB_CHUNK == c->type);
 	force_assert(c->offset >= 0 && c->offset <= c->file.length);
 
+	//Cdbg(1,"0 c->file.start=%lld, c->offset=%lld, c->file.length=%lld", c->file.start, c->offset, c->file.length);
 	offset = c->file.start + c->offset;
 	toSend = c->file.length - c->offset;
 
@@ -35,24 +38,46 @@ int network_open_file_chunk(server *srv, connection *con, chunkqueue *cq) {
 			log_error_write(srv, __FILE__, __LINE__, "ssb", "stat-cache failed:", strerror(errno), c->file.name);
 			return -1;
 		}
-
-		if (-1 == (c->file.fd = open(c->file.name->ptr, O_RDONLY|O_NOCTTY))) {
-			log_error_write(srv, __FILE__, __LINE__, "ssb", "open failed:", strerror(errno), c->file.name);
-			return -1;
+		
+		if( c->type == SMB_CHUNK ){
+			if (-1 == (c->file.fd = smbc_wrapper_open(con,c->file.name->ptr, O_RDONLY, 0755))) {
+				log_error_write(srv, __FILE__, __LINE__, "ss", "open failed: ", strerror(errno));
+				return -1;
+			}
 		}
-		fd_close_on_exec(c->file.fd);
+		else{
+			if (-1 == (c->file.fd = open(c->file.name->ptr, O_RDONLY|O_NOCTTY))) {
+				log_error_write(srv, __FILE__, __LINE__, "ssb", "open failed:", strerror(errno), c->file.name);
+				return -1;
+			}
+
+			fd_close_on_exec(c->file.fd);
+		}
 
 		file_size = sce->st.st_size;
-	} else {
+	} 
+	else {	
 		struct stat st;
-		if (-1 == fstat(c->file.fd, &st)) {
-			log_error_write(srv, __FILE__, __LINE__, "ss", "fstat failed:", strerror(errno));
-			return -1;
+
+		if( c->type == SMB_CHUNK ){
+			if (-1 == smbc_wrapper_stat(con, c->file.name->ptr, &st)) {
+				log_error_write(srv, __FILE__, __LINE__, "ss", "smbc_wrapper_stat failed:", strerror(errno));
+				return -1;
+			}
 		}
+		else{
+			if (-1 == fstat(c->file.fd, &st)) {
+				log_error_write(srv, __FILE__, __LINE__, "ss", "fstat failed:", strerror(errno));
+				return -1;
+			}
+		}
+		
 		file_size = st.st_size;
 	}
-
+	//Cdbg(1,"1 file_size=%d, toSend=%d, offset=%d", file_size, toSend, offset);
+	
 	if (offset > file_size || toSend > file_size || offset > file_size - toSend) {
+		//Cdbg(1,"2 file_size=%d", file_size);
 		log_error_write(srv, __FILE__, __LINE__, "sb", "file was shrinked:", c->file.name);
 		return -1;
 	}

@@ -36,6 +36,8 @@
 # define MAX_CHUNKS SYS_MAX_CHUNKS
 #endif
 
+#define DBE 0
+
 int network_writev_mem_chunks(server *srv, connection *con, int fd, chunkqueue *cq, off_t *p_max_bytes) {
 	struct iovec chunks[MAX_CHUNKS];
 	size_t num_chunks;
@@ -108,6 +110,9 @@ int network_write_chunkqueue_writev(server *srv, connection *con, int fd, chunkq
 			break;
 		case FILE_CHUNK:
 			r = network_write_file_chunk_mmap(srv, con, fd, cq, &max_bytes);
+			break;
+		case SMB_CHUNK:
+			r = network_write_smbfile_chunk_mmap(srv, con, fd, cq, &max_bytes);			
 			break;
 		}
 

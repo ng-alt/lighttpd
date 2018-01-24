@@ -14,6 +14,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#define DBE 0
+
 /**
  * this is a staticfile for a lighttpd plugin
  *
@@ -164,7 +166,7 @@ static int http_response_parse_range(server *srv, connection *con, plugin_data *
 	stat_cache_entry *sce = NULL;
 	buffer *content_type = NULL;
 
-	if (HANDLER_ERROR == stat_cache_get_entry(srv, con, con->physical.path, &sce)) {
+	if (HANDLER_ERROR == stat_cache_get_entry(srv, con, smbc_wrapper_physical_url_path(srv, con), &sce)) {
 		SEGFAULT();
 	}
 
@@ -176,7 +178,7 @@ static int http_response_parse_range(server *srv, connection *con, plugin_data *
 	if (NULL != (ds = (data_string *)array_get_element(con->response.headers, "Content-Type"))) {
 		content_type = ds->value;
 	}
-
+	
 	for (s = con->request.http_range, error = 0;
 	     !error && *s && NULL != (minus = strchr(s, '-')); ) {
 		char *err;
@@ -312,7 +314,14 @@ static int http_response_parse_range(server *srv, connection *con, plugin_data *
 				buffer_free(b);
 			}
 
-			chunkqueue_append_file(con->write_queue, con->physical.path, start, end - start + 1);
+			//- Sungmin add			
+			if(con->mode == SMB_BASIC || con->mode == SMB_NTLM){
+				chunkqueue_append_smb_file(con->write_queue, con->url.path, start, end - start + 1);
+			}
+			else{
+				chunkqueue_append_file(con->write_queue, con->physical.path, start, end - start + 1);
+			}
+			
 			con->response.content_length += end - start + 1;
 		}
 	}
@@ -363,6 +372,8 @@ URIHANDLER_FUNC(mod_staticfile_subrequest) {
 	buffer *mtime = NULL;
 	data_string *ds;
 	int allow_caching = 1;
+	
+	Cdbg(DBE, "enter..status=[%d], uri=[%s], path=[%s], mode=[%d]", con->http_status, con->uri.path->ptr, con->physical.path->ptr, con->mode);
 
 	/* someone else has done a decision for us */
 	if (con->http_status != 0) return HANDLER_GO_ON;
@@ -370,7 +381,7 @@ URIHANDLER_FUNC(mod_staticfile_subrequest) {
 	if (buffer_is_empty(con->physical.path)) return HANDLER_GO_ON;
 
 	/* someone else has handled this request */
-	if (con->mode != DIRECT) return HANDLER_GO_ON;
+	if (con->mode != DIRECT && con->mode != SMB_BASIC && con->mode != SMB_NTLM) return HANDLER_GO_ON;
 
 	/* we only handle GET, POST and HEAD */
 	switch(con->request.http_method) {
@@ -409,8 +420,8 @@ URIHANDLER_FUNC(mod_staticfile_subrequest) {
 	if (con->conf.log_request_handling) {
 		log_error_write(srv, __FILE__, __LINE__,  "s",  "-- handling file as static file");
 	}
-
-	if (HANDLER_ERROR == stat_cache_get_entry(srv, con, con->physical.path, &sce)) {
+	
+	if (HANDLER_ERROR == stat_cache_get_entry(srv, con, smbc_wrapper_physical_url_path(srv, con), &sce)) {
 		con->http_status = 403;
 
 		log_error_write(srv, __FILE__, __LINE__, "sbsb",
@@ -538,7 +549,15 @@ URIHANDLER_FUNC(mod_staticfile_subrequest) {
 	/* we add it here for all requests
 	 * the HEAD request will drop it afterwards again
 	 */
-	http_chunk_append_file(srv, con, con->physical.path, 0, sce->st.st_size);
+ 	//- Sungmin add
+ 	off_t offset = 0;
+ 	off_t file_size = sce->st.st_size;
+	if(con->mode == SMB_BASIC || con->mode == SMB_NTLM){
+		http_chunk_append_smb_file(srv, con, con->url.path, offset, file_size);
+	}
+	else{
+		http_chunk_append_file(srv, con, con->physical.path, offset, file_size);
+	}
 
 	con->http_status = 200;
 	con->file_finished = 1;
@@ -547,7 +566,7 @@ URIHANDLER_FUNC(mod_staticfile_subrequest) {
 }
 
 /* this function is called at dlopen() time and inits the callbacks */
-
+//#ifndef APP_IPKG
 int mod_staticfile_plugin_init(plugin *p);
 int mod_staticfile_plugin_init(plugin *p) {
 	p->version     = LIGHTTPD_VERSION_ID;
@@ -562,3 +581,20 @@ int mod_staticfile_plugin_init(plugin *p) {
 
 	return 0;
 }
+//#else
+/*
+int aicloud_mod_staticfile_plugin_init(plugin *p);
+int aicloud_mod_staticfile_plugin_init(plugin *p) {
+	p->version     = LIGHTTPD_VERSION_ID;
+	p->name        = buffer_init_string("staticfile");
+
+	p->init        = mod_staticfile_init;
+	p->handle_subrequest_start = mod_staticfile_subrequest;
+	p->set_defaults  = mod_staticfile_set_defaults;
+	p->cleanup     = mod_staticfile_free;
+
+	p->data        = NULL;
+
+	return 0;
+}*/
+//#endif

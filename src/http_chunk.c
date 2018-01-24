@@ -34,6 +34,25 @@ static void http_chunk_append_len(server *srv, connection *con, size_t len) {
 	chunkqueue_append_buffer(con->write_queue, b);
 }
 
+//- Sungmin add
+void http_chunk_append_smb_file(server *srv, connection *con, buffer *fn, off_t offset, off_t len) {
+	chunkqueue *cq;
+
+	force_assert(NULL != con);
+	if (0 == len) return;
+	
+	cq = con->write_queue;
+
+	if (con->response.transfer_encoding & HTTP_TRANSFER_ENCODING_CHUNKED) {
+		http_chunk_append_len(srv, con, len);
+	}
+
+	chunkqueue_append_smb_file(cq, fn, offset, len);
+
+	if (con->response.transfer_encoding & HTTP_TRANSFER_ENCODING_CHUNKED) {
+		chunkqueue_append_mem(cq, CONST_STR_LEN("\r\n"));
+	}
+}
 
 void http_chunk_append_file(server *srv, connection *con, buffer *fn, off_t offset, off_t len) {
 	chunkqueue *cq;

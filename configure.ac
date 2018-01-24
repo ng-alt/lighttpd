@@ -107,7 +107,7 @@ AC_HEADER_SYS_WAIT
 AC_CHECK_HEADERS([arpa/inet.h fcntl.h netinet/in.h stdlib.h string.h \
 sys/socket.h sys/time.h unistd.h sys/sendfile.h sys/uio.h \
 getopt.h sys/epoll.h sys/select.h poll.h sys/poll.h sys/devpoll.h sys/filio.h \
-sys/mman.h sys/event.h port.h pwd.h \
+sys/mman.h sys/event.h port.h pwd.h sys/syslimits.h \
 sys/resource.h sys/un.h syslog.h sys/prctl.h uuid/uuid.h])
 
 dnl Checks for typedefs, structures, and compiler characteristics.
@@ -173,6 +173,45 @@ fi
 
 AC_SUBST(LIBEV_CFLAGS)
 AC_SUBST(LIBEV_LIBS)
+
+dnl checking for libsmbclient
+AC_MSG_CHECKING(for libsmbclient support)
+AC_ARG_WITH(libsmbclient,
+    AC_HELP_STRING([--with-libsmbclient@<:@=PATH@:>@],[Include libsmbclient support for fdevent handlers in PATH/include and PATH/bin]),
+    [WITH_LIBSMBCLIENT=$withval],[WITH_LIBSMBCLIENT=no])
+
+LIBSMBCLIENT_CFLAGS=""
+LIBSMBCLIENT_LIBS=""
+
+if test "$WITH_LIBSMBCLIENT" != "no"; then
+	PKG_CHECK_MODULES(LIBSMBCLIENT, libsmbclient, [], [
+		dnl no pkg-config for libsmbclient, searching manually:
+
+		if test "$WITH_LIBSMBCLINET" != "yes"; then
+			LIBSMBCLIENT_CFLAGS="-I$WITH_LIBSMBCLIENT/include"
+			LIBSMBCLIENT_LIBS="-L$WITH_LIBSMBCLIENT/bin -lsmbclient"
+		else
+			AC_CHECK_HEADERS([libsmbclient.h],[
+				AC_CHECK_LIB([smbclient], [smbc_open], [
+						LIBSMBCLIENT_CFLAGS=""
+						LIBSMBCLIENT_LIBS="-lsmbclient"
+					],[
+					AC_MSG_ERROR([libsmbclient not found])
+					]
+				)],[
+					AC_MSG_ERROR([libsmbclient not found])
+				]
+			)
+		fi
+	])
+
+	AC_DEFINE([HAVE_LIBSMBCLIENT], [1], [libsmbclient support])
+    	AC_DEFINE([HAVE_LIBSMBCLIENT_H], [1])
+fi
+
+AC_SUBST(LIBSMBCLIENT_CFLAGS)
+AC_SUBST(LIBSMBCLIENT_LIBS)
+
 
 dnl Checks for database.
 MYSQL_INCLUDE=""
@@ -256,14 +295,14 @@ AC_ARG_WITH(attr, AC_HELP_STRING([--with-attr],[enable extended attribute suppor
 AC_MSG_RESULT($withval)
 if test "$WITH_ATTR" != "no"; then
   # libattr (linux only?)
-  AC_CHECK_LIB(attr, attr_get, [
-    AC_CHECK_HEADERS([attr/attributes.h],[
-      ATTR_LIB=-lattr
-      AC_DEFINE([HAVE_XATTR], [1], [libattr])
-      AC_DEFINE([HAVE_ATTR_ATTRIBUTES_H], [1])
-    ])
-  ])
-  AC_SUBST(ATTR_LIB)
+ AC_CHECK_LIB(attr, attr_get, [
+	AC_CHECK_HEADERS([attr/attributes.h],[
+		ATTR_LIB=-lattr
+		AC_DEFINE([HAVE_XATTR], [1], [libattr])
+		AC_DEFINE([HAVE_ATTR_ATTRIBUTES_H], [1])
+	])
+ ])
+ AC_SUBST(ATTR_LIB)
 
   # (Free)BSD extattr
   AC_CHECK_FUNC([extattr_get_file], [
@@ -442,7 +481,7 @@ if test "$WITH_FAM" != "no"; then
   LIBS=$FAM_LIBS
   AC_CHECK_FUNCS([FAMNoExists])
   LIBS=$OLD_LIBS
-
+  
   if test x$FAM_LIBS = x; then
      AC_MSG_ERROR([fam/gamin-headers and/or libs where not found, install them or build with --without-fam])
   fi
@@ -454,31 +493,63 @@ AC_ARG_WITH(webdav-props, AC_HELP_STRING([--with-webdav-props],[properties in mo
 AC_MSG_RESULT([$WITH_WEBDAV_PROPS])
 
 if test "$WITH_WEBDAV_PROPS" != "no"; then
-  PKG_CHECK_MODULES(XML, libxml-2.0, [
+ PKG_CHECK_MODULES(XML, libxml-2.0, [
     AC_DEFINE([HAVE_LIBXML2], [1], [libxml2])
     AC_DEFINE([HAVE_LIBXML_H], [1], [libxml.h])
-  ])
-  PKG_CHECK_MODULES(SQLITE, sqlite3, [
+ ])
+ PKG_CHECK_MODULES(SQLITE, sqlite3, [
     AC_DEFINE([HAVE_SQLITE3], [1], [libsqlite3])
     AC_DEFINE([HAVE_SQLITE3_H], [1], [sqlite3.h])
-  ])
+ ])
 
-  AC_MSG_CHECKING(for locks in mod_webdav)
-  AC_ARG_WITH(webdav-locks, AC_HELP_STRING([--with-webdav-locks],[locks in mod_webdav]),
-  [WITH_WEBDAV_LOCKS=$withval],[WITH_WEBDAV_LOCKS=no])
-  AC_MSG_RESULT([$WITH_WEBDAV_LOCKS])
+ AC_MSG_CHECKING(for locks in mod_webdav)
+ AC_ARG_WITH(webdav-locks, AC_HELP_STRING([--with-webdav-locks],[locks in mod_webdav]),
+ [WITH_WEBDAV_LOCKS=$withval],[WITH_WEBDAV_LOCKS=no])
+ AC_MSG_RESULT([$WITH_WEBDAV_LOCKS])
 
-  if test "$WITH_WEBDAV_LOCKS" != "no"; then
-    AC_CHECK_LIB(uuid, uuid_unparse, [
-      AC_CHECK_HEADERS([uuid/uuid.h],[
-        UUID_LIBS=-luuid
-        AC_DEFINE([HAVE_UUID], [1], [libuuid])
-        AC_DEFINE([HAVE_UUID_H], [1], [uuid/uuid.h is available])
-      ])
-    ])
-  fi
+ if test "$WITH_WEBDAV_LOCKS" != "no"; then
+   AC_CHECK_LIB(uuid, uuid_unparse, [
+         AC_CHECK_HEADERS([uuid/uuid.h],[
+                 UUID_LIBS=-luuid
+                 AC_DEFINE([HAVE_UUID], [1], [libuuid])
+		 AC_DEFINE([HAVE_UUID_H], [1], [uuid/uuid.h is available])
+         ])
+ ])
+ fi
 fi
 AC_SUBST(UUID_LIBS)
+
+AC_MSG_CHECKING(for properties in mod_smbdav)
+AC_ARG_WITH(smbdav-props, AC_HELP_STRING([--with-smbdav-props],[properties in mod_smbdav]),
+[WITH_SMBDAV_PROPS=$withval],[WITH_SMBDAV_PROPS=no])
+AC_MSG_RESULT([$WITH_SMBDAV_PROPS])
+
+if test "$WITH_SMBDAV_PROPS" != "no"; then
+ PKG_CHECK_MODULES(XML, libxml-2.0, [
+    AC_DEFINE([HAVE_LIBXML2], [1], [libxml2])
+    AC_DEFINE([HAVE_LIBXML_H], [1], [libxml.h])
+ ])
+ PKG_CHECK_MODULES(SQLITE, sqlite3, [
+    AC_DEFINE([HAVE_SQLITE3], [1], [libsqlite3])
+    AC_DEFINE([HAVE_SQLITE3_H], [1], [sqlite3.h])
+ ])
+
+ AC_MSG_CHECKING(for locks in mod_smbdav)
+ AC_ARG_WITH(smbdav-locks, AC_HELP_STRING([--with-smbdav-locks],[locks in mod_smbdav]),
+ [WITH_SMBDAV_LOCKS=$withval],[WITH_SMBDAV_LOCKS=no])
+ AC_MSG_RESULT([$WITH_SMBDAV_LOCKS])
+
+ if test "$WITH_SMBDAV_LOCKS" != "no"; then
+   AC_CHECK_LIB(uuid, uuid_unparse, [
+         AC_CHECK_HEADERS([uuid/uuid.h],[
+                 UUID_LIBS=-luuid
+                 AC_DEFINE([HAVE_UUID], [1], [libuuid])
+		 AC_DEFINE([HAVE_UUID_H], [1], [uuid/uuid.h is available])
+         ])
+ ])
+
+ fi
+fi
 
 dnl Check for gdbm
 AC_MSG_CHECKING(for gdbm)
@@ -526,18 +597,18 @@ if test "$WITH_LUA" != "no"; then
  dnl first check for lua5.1 (debian and others), then lua-5.1 (freebsd), then $WITH_LUA (defaults to lua)
  dnl check "lua" last now that lua5.2 is out
  PKG_CHECK_MODULES(LUA, lua5.1 >= 5.1, [
-  AC_DEFINE([HAVE_LUA], [1], [liblua])
-  AC_DEFINE([HAVE_LUA_H], [1], [lua.h])
+   AC_DEFINE([HAVE_LUA], [1], [liblua])
+   AC_DEFINE([HAVE_LUA_H], [1], [lua.h])
  ],[
   PKG_CHECK_MODULES(LUA, lua-5.1 >= 5.1, [
    AC_DEFINE([HAVE_LUA], [1], [liblua])
    AC_DEFINE([HAVE_LUA_H], [1], [lua.h])
-  ],[
+ ],[
    PKG_CHECK_MODULES(LUA, $WITH_LUA >= 5.1, [
-    AC_DEFINE([HAVE_LUA], [1], [liblua])
-    AC_DEFINE([HAVE_LUA_H], [1], [lua.h])
-   ])
-  ])
+   AC_DEFINE([HAVE_LUA], [1], [liblua])
+   AC_DEFINE([HAVE_LUA_H], [1], [lua.h])
+ ])
+ ])
  ])
 
  AC_SUBST(LUA_CFLAGS)
@@ -711,21 +782,6 @@ LIGHTTPD_VERSION_ID=`echo $PACKAGE_VERSION | $AWK -F '.' '{print "(" $1 " << 16 
 AC_DEFINE_UNQUOTED([LIGHTTPD_VERSION_ID], [$LIGHTTPD_VERSION_ID], [lighttpd-version-id])
 
 AC_CONFIG_FILES([Makefile src/Makefile
-		 doc/config/conf.d/Makefile \
-		 doc/config/vhosts.d/Makefile \
-		 doc/config/Makefile \
-		 doc/scripts/Makefile \
-		 doc/initscripts/Makefile \
-		 doc/systemd/Makefile \
-		 doc/outdated/Makefile \
-		 doc/Makefile \
-		 tests/Makefile \
-		 tests/docroot/Makefile \
-		 tests/docroot/123/Makefile \
-		 tests/docroot/www/Makefile \
-		 tests/docroot/www/go/Makefile \
-		 tests/docroot/www/indexfile/Makefile \
-		 tests/docroot/www/expire/Makefile \
 		 distribute.sh])
 AC_OUTPUT
 
@@ -828,6 +884,7 @@ else
 	disable_feature="$disable_feature $features"
 fi
 
+
 features="webdav-properties"
 if test "x$XML_LIBS" \!= x -a "x$SQLITE_LIBS" \!= x; then
 	enable_feature="$enable_feature $features"
@@ -842,6 +899,19 @@ else
 	disable_feature="$disable_feature $features"
 fi
 
+features="smbdav-properties"
+if test "x$XML_LIBS" \!= x -a "x$SQLITE_LIBS" \!= x; then
+	enable_feature="$enable_feature $features"
+else
+	disable_feature="$disable_feature $features"
+fi
+
+features="smbdav-locks"
+if test "x$UUID_LIBS" \!= x; then
+	enable_feature="$enable_feature $features"
+else
+	disable_feature="$disable_feature $features"
+fi
 
 dnl output
 

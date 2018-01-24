@@ -108,7 +108,12 @@ typedef struct {
 	config_scope_type_t scope;
 } config_values_t;
 
-typedef enum { DIRECT, EXTERNAL } connection_type;
+typedef enum { 
+	DIRECT, 
+	EXTERNAL, 
+	SMB_BASIC,
+	SMB_NTLM
+} connection_type;
 
 typedef struct {
 	char *key;
@@ -251,6 +256,11 @@ typedef struct {
 	buffer *dirlist_encoding;
 	buffer *errorfile_prefix;
 
+#ifdef HAVE_LIBSMBCLIENT
+	//- Sungmin add 20111017
+	buffer *auth_ntlm_list;
+#endif
+
 	unsigned short max_keep_alive_requests;
 	unsigned short max_keep_alive_idle;
 	unsigned short max_read_idle;
@@ -353,6 +363,144 @@ typedef struct {
 	comp_key_t comp_type;
 } cond_cache_t;
 
+//- Sungmin add
+#ifdef HAVE_LIBSMBCLIENT
+#include <libsmbclient.h>
+#define uint32 uint32_t
+
+#define NMB_PORT 137
+#define SMB_PORT 445
+
+/* Capabilities.  see ftp.microsoft.com/developr/drg/cifs/cifs/cifs4.txt */
+#define CAP_RAW_MODE         0x0001
+#define CAP_MPX_MODE         0x0002
+#define CAP_UNICODE          0x0004
+#define CAP_LARGE_FILES      0x0008
+#define CAP_NT_SMBS          0x0010
+#define CAP_RPC_REMOTE_APIS  0x0020
+#define CAP_STATUS32         0x0040
+#define CAP_LEVEL_II_OPLOCKS 0x0080
+#define CAP_LOCK_AND_READ    0x0100
+#define CAP_NT_FIND          0x0200
+#define CAP_DFS              0x1000
+#define CAP_W2K_SMBS         0x2000
+#define CAP_LARGE_READX      0x4000
+#define CAP_LARGE_WRITEX     0x8000
+#define CAP_UNIX             0x800000 /* Capabilities for UNIX extensions. Created by HP. */
+#define CAP_EXTENDED_SECURITY 0x80000000
+
+/* CreateDisposition field. */
+#define FILE_SUPERSEDE 0		/* File exists overwrite/supersede. File not exist create. */
+#define FILE_OPEN 1			/* File exists open. File not exist fail. */
+#define FILE_CREATE 2			/* File exists fail. File not exist create. */
+#define FILE_OPEN_IF 3			/* File exists open. File not exist create. */
+#define FILE_OVERWRITE 4		/* File exists overwrite. File not exist fail. */
+#define FILE_OVERWRITE_IF 5		/* File exists overwrite. File not exist create. */
+
+/* CreateOptions field. */
+#define FILE_DIRECTORY_FILE       0x0001
+#define FILE_WRITE_THROUGH        0x0002
+#define FILE_SEQUENTIAL_ONLY      0x0004
+#define FILE_NO_INTERMEDIATE_BUFFERING 0x0008
+#define FILE_SYNCHRONOUS_IO_ALERT      0x0010	/* may be ignored */
+#define FILE_SYNCHRONOUS_IO_NONALERT   0x0020	/* may be ignored */
+#define FILE_NON_DIRECTORY_FILE   0x0040
+#define FILE_CREATE_TREE_CONNECTION    0x0080	/* ignore, should be zero */
+#define FILE_COMPLETE_IF_OPLOCKED      0x0100	/* ignore, should be zero */
+#define FILE_NO_EA_KNOWLEDGE      0x0200
+#define FILE_EIGHT_DOT_THREE_ONLY 0x0400 /* aka OPEN_FOR_RECOVERY: ignore, should be zero */
+#define FILE_RANDOM_ACCESS        0x0800
+#define FILE_DELETE_ON_CLOSE      0x1000
+#define FILE_OPEN_BY_FILE_ID	  0x2000
+#define FILE_OPEN_FOR_BACKUP_INTENT    0x4000
+#define FILE_NO_COMPRESSION       0x8000
+#define FILE_RESERVER_OPFILTER    0x00100000	/* ignore, should be zero */
+#define FILE_OPEN_REPARSE_POINT   0x00200000
+#define FILE_OPEN_NO_RECALL       0x00400000
+#define FILE_OPEN_FOR_FREE_SPACE_QUERY 0x00800000 /* ignore should be zero */
+
+/* File Specific access rights */
+#define FILE_READ_DATA        0x00000001
+#define FILE_WRITE_DATA       0x00000002
+#define FILE_APPEND_DATA      0x00000004
+#define FILE_READ_EA          0x00000008 /* File and directory */
+#define FILE_WRITE_EA         0x00000010 /* File and directory */
+#define FILE_EXECUTE          0x00000020
+#define FILE_DELETE_CHILD     0x00000040
+#define FILE_READ_ATTRIBUTES  0x00000080
+#define FILE_WRITE_ATTRIBUTES 0x00000100
+
+#define FILE_ALL_ACCESS       0x000001FF
+
+typedef enum auth_type {
+	SMB_AUTH_UNSET,
+	SMB_AUTH_BASIC,
+	SMB_AUTH_NTLM
+}SMB_AUTH_TYPE;
+
+typedef enum ntlm_message_type
+{
+	NTLMSSP_INITIAL = 0 /* samba internal state */,
+	NTLMSSP_NEGOTIATE = 1,
+	NTLMSSP_CHALLENGE = 2,
+	NTLMSSP_AUTH      = 3,
+	NTLMSSP_UNKNOWN   = 4,
+	NTLMSSP_DONE      = 5 /* samba final state */
+}NTLM_MESSAGE_TYPE;
+
+typedef enum {
+	SMB_FILE_QUERY,
+	SMB_SHARE_QUERY,
+	SMB_HOST_QUERY
+}URI_QUERY_TYPE;
+
+/* protocol types. It assumes that higher protocols include lower protocols
+   as subsets */
+enum protocol_types {
+	PROTOCOL_NONE,
+	PROTOCOL_CORE,
+	PROTOCOL_COREPLUS,
+	PROTOCOL_LANMAN1,
+	PROTOCOL_LANMAN2,
+	PROTOCOL_NT1,
+	PROTOCOL_SMB2
+};
+
+typedef struct smb_info_s {
+
+	SMB_AUTH_TYPE auth_type;
+	
+	//common part	
+	buffer *workgroup;
+	buffer *server;
+	buffer *share;
+	buffer *path;
+	URI_QUERY_TYPE qflag;
+	buffer *user_agent;
+	buffer *src_ip;
+	int auth_right;
+
+	int login_count;
+	time_t login_begin_time;
+	
+	//for Basic
+	buffer *username;
+	buffer *password;
+	time_t auth_time;
+	//unsigned char is_authed;
+	
+	//for NTLM
+	struct cli_state *cli;
+	NTLM_MESSAGE_TYPE state;
+	void *ntlmssp_state;
+
+	buffer *asus_token;
+	
+	struct smb_info_s *prev, *next;
+	
+}smb_info_t;
+#endif
+
 typedef struct {
 	connection_state_t state;
 
@@ -403,6 +551,8 @@ typedef struct {
 	sock_addr dst_addr;
 	buffer *dst_addr_buf;
 
+	buffer *asus_token;
+	
 	/* request */
 	buffer *parse_request;
 	unsigned int parsed_response; /* bitfield which contains the important header-fields of the parsed response header */
@@ -448,6 +598,25 @@ typedef struct {
 	etag_flags_t etag_flags;
 
 	int conditional_is_valid[COMP_LAST_ELEMENT]; 
+#ifdef HAVE_LIBSMBCLIENT
+	buffer* share_link_basic_auth;
+	buffer* share_link_shortpath;
+	buffer* share_link_realpath;
+	buffer* share_link_filename;
+	int     share_link_type;
+	buffer* physical_auth_url;
+	physical url; //- start with smb://	 or http://
+	buffer* url_options;
+	smb_info_t *smb_info;
+	int		cur_fd;// samba r/w fd
+	
+	buffer *aidisk_username;
+	buffer *aidisk_passwd;
+
+	buffer *match_smb_ip;
+	buffer *replace_smb_name;
+#endif
+
 } connection;
 
 typedef struct {
@@ -527,6 +696,17 @@ typedef struct {
 	} stat_cache_engine;
 	unsigned short enable_cores;
 	unsigned short reject_expect_100_with_417;
+
+#ifdef HAVE_LIBSMBCLIENT
+	//- Sungmin add 20111018
+	buffer *arpping_interface;
+	buffer *syslog_file;
+	buffer *product_image;
+	buffer *aicloud_version;
+	buffer *smartsync_version;
+	buffer *app_installation_url;	
+	unsigned int max_sharelink;
+#endif
 } server_config;
 
 typedef struct server_socket {
@@ -652,7 +832,75 @@ typedef struct server {
 
 	uid_t uid;
 	gid_t gid;
+
+//- Sungmin add
+#ifdef HAVE_LIBSMBCLIENT
+	smb_info_t *smb_srv_info_list;
+	int syslog_fd;
+	buffer *syslog_buf;
+	buffer *cur_login_info;
+	buffer *last_login_info;
+	time_t last_no_ssl_connection_ts;
+	int is_streaming_port_opend;
+#endif
+	
 } server;
 
+//- Sungmin add
+#ifdef HAVE_LIBSMBCLIENT
+typedef struct smb_srv_info_s {
+	int id;
+	buffer *ip;
+	buffer *mac;
+	buffer *name;	
+	int online;
+	struct smb_srv_info_s *prev, *next;
+}smb_srv_info_t;
+smb_srv_info_t *smb_srv_info_list;
+
+typedef struct share_link_info_s {
+	buffer *shortpath;
+	buffer *realpath;
+	buffer *filename;
+	buffer *auth;
+	unsigned long createtime;
+	unsigned long expiretime;
+	int toshare;
+	struct share_link_info_s *prev, *next;
+}share_link_info_t;
+share_link_info_t *share_link_info_list;
+
+typedef struct aicloud_acc_info_s {
+	buffer *username;
+	buffer *password;
+	struct aicloud_acc_info_s *prev, *next;
+}aicloud_acc_info_t;
+aicloud_acc_info_t *aicloud_acc_info_list;
+
+typedef struct aicloud_acc_invite_info_s {
+	buffer *productid;
+	buffer *deviceid;
+	buffer *token;
+	buffer *permission;
+	unsigned long bytes_in_avail;
+	int smart_access;
+	buffer *security_code;
+	int status;
+	int auth_type;
+	unsigned long createtime;
+	struct aicloud_acc_invite_info_s *prev, *next;
+}aicloud_acc_invite_info_t;
+aicloud_acc_invite_info_t *aicloud_acc_invite_info_list;
+
+typedef enum { 
+	T_ACCOUNT_SAMBA,
+	T_ACCOUNT_AICLOUD
+} account_type;
+
+typedef enum { 
+	T_ADMIN,
+	T_USER
+} account_permission_type;
+#endif
 
 #endif
