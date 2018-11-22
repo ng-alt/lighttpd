@@ -107,6 +107,14 @@ endif
 LIBS += $(LIBSMBCLIENT_LIBS) $(XML_LIBS) $(SHARED_LIBS)
 CFLAGS += $(LIBSMBCLIENT_CFLAGS) $(XML_CFLAGS)
 
+#Sungmin add
+lib_LTLIBRARIES += liblightsql.la
+liblightsql_la_SOURCES = sql.c
+liblightsql_la_CFLAGS=$(SQLITE_CFLAGS)
+liblightsql_la_LDFLAGS = -module -export-dynamic -avoid-version -no-undefined
+liblightsql_la_LIBADD = $(common_libadd) $(SQLITE_LIBS)
+sql_libadd = liblightsql.la
+
 #lib_LTLIBRARIES += mod_flv_streaming.la
 #mod_flv_streaming_la_SOURCES = mod_flv_streaming.c
 #mod_flv_streaming_la_LDFLAGS = -module -export-dynamic -avoid-version
@@ -275,14 +283,6 @@ mod_auth_la_LIBADD = $(CRYPT_LIB) $(SSL_LIB) $(LDAP_LIB) $(LBER_LIB) $(common_li
 #mod_accesslog_la_SOURCES = mod_accesslog.c
 #mod_accesslog_la_LDFLAGS = -module -export-dynamic -avoid-version
 #mod_accesslog_la_LIBADD = $(common_libadd)
-
-#Sungmin add
-lib_LTLIBRARIES += liblightsql.la
-liblightsql_la_SOURCES = sql.c
-liblightsql_la_CFLAGS=$(SQLITE_CFLAGS)
-liblightsql_la_LDFLAGS = -module -export-dynamic -avoid-version -no-undefined
-liblightsql_la_LIBADD = $(common_libadd) $(SQLITE_LIBS)
-sql_libadd = liblightsql.la
 
 hdr = server.h base64.h buffer.h network.h log.h keyvalue.h \
 	response.h request.h fastcgi.h chunk.h \
